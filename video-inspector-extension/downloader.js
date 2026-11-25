@@ -20,6 +20,8 @@
   const mseStates = new Map();
   const msEntries = new WeakMap();
   const engine = window.__viDownloadEngine || null;
+  const qualityCache = new Map();
+  const QUALITY_CACHE_TTL = 5 * 60 * 1000;
 
   function fire(name, detail) {
     document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(detail) }));
@@ -388,8 +390,18 @@
       fire(QUALITIES, { id, qualities: [] });
       return;
     }
-    engine.resolveBilibiliQualities(pageUrl).then((qualities) => {
-      fire(QUALITIES, { id, qualities: qualities || [] });
+    const cached = qualityCache.get(pageUrl);
+    if (cached && Date.now() - cached.ts < QUALITY_CACHE_TTL) {
+      fire(QUALITIES, { id, qualities: cached.qualities });
+      return;
+    }
+    const meta = (typeof engine.referrerMeta === 'function')
+      ? engine.referrerMeta(pageUrl, '', null, '')
+      : null;
+    engine.resolveBilibiliQualities(pageUrl, meta).then((qualities) => {
+      const list = qualities || [];
+      if (list.length) qualityCache.set(pageUrl, { ts: Date.now(), qualities: list });
+      fire(QUALITIES, { id, qualities: list });
     }).catch(() => {
       fire(QUALITIES, { id, qualities: [] });
     });

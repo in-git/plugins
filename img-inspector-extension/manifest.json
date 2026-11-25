@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "图片探查器 - 批量下载网页图片",
+  "version": "1.0.9",
+  "description": "扫描当前网页中的所有图片，支持瀑布流预览、尺寸筛选、多选与一键打包下载。",
+  "permissions": ["activeTab", "scripting", "downloads"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["tailwind-css.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "图片探查器",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

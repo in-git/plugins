@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* 模态框：宽 70%、高 80%（严格按视口高度），屏幕正中心。
+     min/max 同时锁定，避免被 flex 或内容挤压；JS 会再按 innerHeight 写入精确像素值。 */
+  .ii-panel {
+    width: 70vw;
+    height: 80vh;
+    min-height: 80vh;
+    max-height: 80vh;
+    max-width: 1600px;
+    flex: 0 0 auto;
+  }
+
+  .ii-input {
+    height: 32px;
+    padding: 0 11px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    background: #fff;
+    color: #1d1d1f;
+    font-size: 12px;
+    line-height: 32px;
+    outline: none;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  .ii-input::placeholder { color: #b0b0b5; }
+  .ii-input:focus { border-color: rgba(0, 122, 255, .45); box-shadow: 0 0 0 3px rgba(0, 122, 255, .08); }
+  .ii-input[type="number"] { -moz-appearance: textfield; }
+  .ii-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  .ii-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 13px;
+    border: 1px solid rgba(0, 0, 0, 0.07);
+    border-radius: 10px;
+    background: #fff;
+    color: #1d1d1f;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color .18s ease, border-color .18s ease, opacity .18s ease;
+  }
+  .ii-btn:hover:not(:disabled) { background: #f6f6f7; border-color: rgba(0, 0, 0, .12); }
+  .ii-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  .ii-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 15px;
+    border-radius: 10px;
+    background: #007aff;
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color .18s ease, opacity .18s ease;
+  }
+  .ii-btn-primary:hover:not(:disabled) { background: #0071eb; }
+  .ii-btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+  .ii-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    color: #86868b;
+    cursor: pointer;
+    transition: background-color .18s ease, color .18s ease;
+  }
+  .ii-close:hover { background: #f6f6f7; color: #1d1d1f; }
+
+  .ii-scroll { scrollbar-width: thin; scrollbar-color: #dedee3 transparent; }
+  .ii-scroll::-webkit-scrollbar { width: 7px; }
+  .ii-scroll::-webkit-scrollbar-thumb { background: #dedee3; border-radius: 99px; }
+  .ii-scroll::-webkit-scrollbar-track { background: transparent; }
+
+  /* 瀑布流卡片：绝对定位虚拟渲染 */
+  .ii-card {
+    position: absolute;
+    overflow: hidden;
+    padding: 10px;
+    border: 1px solid rgba(0, 0, 0, .055);
+    border-radius: 14px;
+    background: #fff;
+    cursor: pointer;
+    contain: layout style;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  .ii-card:hover { border-color: rgba(0, 0, 0, .13); box-shadow: 0 8px 26px rgba(0, 0, 0, .07); }
+  .ii-card.is-selected { border-color: #007aff; box-shadow: 0 0 0 2px rgba(0, 122, 255, .18); }
+
+  .ii-media {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 8px;
+    background: #f6f6f7;
+  }
+  .ii-media.is-broken::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #f6f6f7, #ededf0);
+  }
+  .ii-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity .32s ease;
+  }
+  .ii-img.is-loaded { opacity: 1; }
+
+  .ii-pick {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid rgba(255, 255, 255, .9);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .82);
+    color: transparent;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .18s ease, background-color .18s ease;
+    backdrop-filter: blur(6px);
+  }
+  .ii-card:hover .ii-pick, .ii-pick.is-on { opacity: 1; }
+  .ii-pick.is-on { background: #007aff; border-color: #007aff; color: #fff; }
+
+  .ii-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+    padding: 0 2px;
+    font-size: 11px;
+    color: #86868b;
+    min-width: 0;
+  }
+  .ii-dim { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .ii-host {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #b0b0b5;
+    font-size: 10px;
+  }
+  .ii-dl {
+    flex: 0 0 auto;
+    height: 22px;
+    padding: 0 9px;
+    border: 1px solid rgba(0, 0, 0, .07);
+    border-radius: 7px;
+    background: #fff;
+    color: #86868b;
+    font-size: 10px;
+    cursor: pointer;
+    transition: background-color .18s ease, color .18s ease;
+  }
+  .ii-card:hover .ii-dl { color: #1d1d1f; }
+  .ii-dl:hover { background: #f6f6f7; color: #007aff; }
+
+  .ii-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 260px;
+    text-align: center;
+  }
+}

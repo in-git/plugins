@@ -1,0 +1,10 @@
+const fs = require('fs');
+const css = fs.readFileSync('tailwind.css', 'utf8');
+const injected = fs.readFileSync('tailwind-css.js', 'utf8');
+const content = fs.readFileSync('content.js', 'utf8');
+const keys = ['70vw', '80vh', 'min-height:80vh', 'max-height:80vh', 'flex:0 0 auto'];
+for (const key of keys) console.log(key, 'css:', css.includes(key), 'injected:', injected.includes(key));
+console.log('applyPanelSize in content:', content.includes('function applyPanelSize()'));
+console.log('innerHeight * 0.8:', content.includes('window.innerHeight * 0.8'));
+console.log('open calls applyPanelSize:', /host\.style\.display = 'block';\s*\n\s*applyPanelSize\(\);/.test(content));
+console.log('resize calls applyPanelSize:', /if \(!isOpen\(\)\) return;\s*\n\s*applyPanelSize\(\);/.test(content));

@@ -743,7 +743,10 @@
       const qualities = dash.video.map((v) => ({
         id: v.id,
         label: qualityName(v.id),
-        codec: v.codecs || ''
+        codec: v.codecs || '',
+        width: v.width || 0,
+        height: v.height || 0,
+        frameRate: v.frameRate || ''
       }));
       // 去重并按清晰度降序
       const seen = new Set();

@@ -135,14 +135,14 @@
 </style>
 </head>
 <body>
-<div id="vi-badge">Alt+S 探查（关）</div>
+<div id="vi-badge">探查（关）</div>
 <div id="vi-overlays"></div>
 <div id="vi-tip"></div>
 
 <div class="wrap">
   <h1>视频下载工具-吴文龙</h1>
   <p class="lead">
-    按 <kbd>Alt</kbd> + <kbd>S</kbd> 开启探查模式。移动鼠标会高亮当前元素，并在元素内部用红色虚线框标出视频；
+    开启探查模式后，移动鼠标会高亮当前元素，并在元素内部用红色虚线框标出视频；
     提示框和右下角面板会显示视频个数。单击锁定结果，按 <kbd>Esc</kbd> 退出。
   </p>
 
@@ -186,7 +186,6 @@
 (() => {
   'use strict';
 
-  const hotkey = 's';
   const maxDepth = 12;
   const cache = new WeakMap();
 
@@ -213,11 +212,6 @@
       setActive(false);
       return;
     }
-    if (!event.altKey || event.ctrlKey || event.metaKey) return;
-    if ((event.key || '').toLowerCase() !== hotkey) return;
-    if (isTyping(event.target)) return;
-    event.preventDefault();
-    setActive(!active);
   }, true);
 
   document.addEventListener('mousemove', (event) => {
@@ -256,7 +250,7 @@
     current = null;
     panel.hidden = true;
     if (!active) {
-      badge.textContent = 'Alt+S 探查（关）';
+      badge.textContent = '探查（关）';
       badge.classList.remove('on');
       overlays.replaceChildren();
       tip.style.display = 'none';
