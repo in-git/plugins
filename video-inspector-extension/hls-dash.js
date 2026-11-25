@@ -1314,9 +1314,104 @@
     }
   }
 
+  // ===== 三层资源模型 Layer 3：平台 Adapter =====
+  function detectPlatform(pageUrl) {
+    let host = '';
+    try { host = new URL(pageUrl || location.href).hostname; } catch (_) {}
+    if (/bilibili\.com$/.test(host) || /\.bilibili\.com$/.test(host)) return 'bilibili';
+    if (/douyin\.com$/.test(host) || /\.douyin\.com$/.test(host)) return 'douyin';
+    if (/tiktok\.com$/.test(host) || /\.tiktok\.com$/.test(host)) return 'tiktok';
+    return '';
+  }
+
+  function pageFetchMeta(platform) {
+    if (platform === 'tiktok') {
+      return {
+        referrer: TIKTOK_REFERER,
+        userAgent: TIKTOK_UA,
+        credentials: 'include',
+        headers: { Referer: TIKTOK_REFERER }
+      };
+    }
+    if (platform === 'douyin') {
+      return {
+        referrer: DOUYIN_REFERER,
+        userAgent: DOUYIN_MOBILE_UA,
+        credentials: 'include',
+        headers: { Referer: DOUYIN_REFERER }
+      };
+    }
+    return { referrer: 'https://www.bilibili.com/', headers: { Referer: 'https://www.bilibili.com/' } };
+  }
+
+  // 从页面一次性枚举所有可下载视频，不要求它正在播放。
+  async function extractFromPage(pageUrl, meta) {
+    const platform = detectPlatform(pageUrl);
+    if (!platform) return [];
+    const out = [];
+    const seen = new Set();
+    const add = (entry) => {
+      if (!entry || !entry.url || seen.has(entry.url)) return;
+      seen.add(entry.url);
+      out.push(Object.assign({ kind: 'direct', score: 80, poster: '', title: '', videoUrl: '', audioUrl: '', width: 0, height: 0, duration: 0 }, entry));
+    };
+
+    let html = '';
+    try {
+      const workMeta = Object.assign({}, pageFetchMeta(platform), meta || {});
+      const res = await fetch(pageUrl || location.href, withMeta(workMeta, { credentials: workMeta.credentials || 'omit', redirect: 'follow' }));
+      html = await res.text();
+    } catch (_) {}
+
+    if (platform === 'tiktok') {
+      const cands = extractTiktokFromHtml(html || '');
+      const video = cands.filter((c) => !c.isAudio && !c.h265);
+      const audio = cands.filter((c) => c.isAudio);
+      const audioUrl = audio.length ? audio[0].url : '';
+      video.slice(0, 60).forEach((c) => {
+        add({
+          url: c.url,
+          videoUrl: c.url,
+          audioUrl,
+          kind: audioUrl ? 'streams' : 'direct',
+          title: c.codec || 'TikTok 视频',
+          score: c.codec === 'download' ? 92 : 86
+        });
+      });
+    } else if (platform === 'douyin') {
+      const extracted = extractFromJsonScripts(html || '');
+      if (extracted && extracted.videoUrl) {
+        add({
+          url: extracted.videoUrl,
+          videoUrl: extracted.videoUrl,
+          audioUrl: extracted.audioUrl || '',
+          kind: extracted.audioUrl ? 'streams' : 'direct',
+          title: '抖音视频',
+          score: 86
+        });
+      }
+    } else if (platform === 'bilibili') {
+      const bvs = new Set();
+      (String(html || '').match(/BV[0-9A-Za-z]{10}/g) || []).forEach((bv) => bvs.add(bv));
+      const current = /(BV[0-9A-Za-z]{10})/.exec(pageUrl || location.href);
+      if (current) bvs.add(current[1]);
+      Array.from(bvs).slice(0, 60).forEach((bv) => {
+        add({
+          url: 'https://www.bilibili.com/video/' + bv,
+          title: bv,
+          kind: 'platform',
+          score: 70
+        });
+      });
+    }
+
+    return out;
+  }
+
   window.__viDownloadEngine = {
     detectKind, fetchWhole, downloadHls, downloadDash, verifyBlob,
     mergeStreams, tsToMp4, isFmp4Head, isTsHead, resolvePlatform,
+    detectPlatform, extractFromPage,
     resolveBilibiliQualities, referrerMeta, probeTracks
   };
 })();

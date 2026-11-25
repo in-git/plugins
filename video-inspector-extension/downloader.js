@@ -12,6 +12,8 @@
   const PROBE_SIZE_RESPONSE = '__video_inspector_probe_size_response__';
   const GET_QUALITIES = '__video_inspector_get_qualities__';
   const QUALITIES = '__video_inspector_qualities__';
+  const SCAN_RESOURCES = '__video_inspector_scan_resources__';
+  const SCAN_RESULT = '__video_inspector_scan_result__';
   const controllers = new Map();
   const MAX_ITEMS = 400;
   const MAX_BYTES = 1024 * 1024 * 1024;
@@ -115,6 +117,110 @@
     vaultIds.add(key);
     vault.push(entry);
     fire('__video_inspector_resources_updated__', { count: vault.length });
+  }
+
+  // ===== 三层资源模型 Layer 1：页面资源发现（不依赖正在播放的 video） =====
+  // 只登记元数据，不保留响应体，避免受 MAX_ITEMS / MAX_BYTES 限制。
+  const pageResourceEntries = new Map();
+
+  function normalizeResourceUrl(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    let text = String(raw).trim()
+      .replace(/\\u002F/gi, '/').replace(/\\\//g, '/')
+      .replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+    if (!text || /^(blob|data|mse|javascript):/i.test(text)) return '';
+    try {
+      if (/^\/\//.test(text)) text = location.protocol + text;
+      text = new URL(text, location.href).href;
+    } catch (_) { return ''; }
+    return /^https?:\/\//i.test(text) ? text : '';
+  }
+
+  function resourceKey(url) {
+    try {
+      const u = new URL(url);
+      return u.origin + u.pathname;
+    } catch (_) {
+      return String(url).split('?')[0];
+    }
+  }
+
+  function mediaScore(url) {
+    if (/\.(mp4|m4v|webm|mov|mkv|avi|flv)(\?|#|$)/i.test(url)) return 90;
+    if (/\.m3u8(\?|#|$)/i.test(url) || /\.mpd(\?|#|$)/i.test(url)) return 85;
+    if (/\/video\/|\/videos\/|videoplayback|\/video\/tos\/|v\d+-webapp[^/]*\/video\/|bilivideo|upos-sz|upos-hz|tiktokcdn|byteoversea|aweme|douyinvod/i.test(url)) return 75;
+    if (/\.(mp3|m4a|aac|ogg|opus|flac|wav)(\?|#|$)/i.test(url)) return 20;
+    return 0;
+  }
+
+  function addPageResource(raw, opts) {
+    const url = normalizeResourceUrl(raw);
+    if (!url) return;
+    const key = resourceKey(url);
+    if (!key) return;
+    const score = mediaScore(url);
+    if (score < 60) return;
+    const prev = pageResourceEntries.get(key);
+    if (prev && (prev.score || 0) >= score) return;
+    let name = '';
+    try { name = decodeURIComponent(url.split('?')[0].split('/').pop()) || ''; } catch (_) {}
+    pageResourceEntries.set(key, Object.assign({
+      id: 'scan-' + key,
+      url,
+      key,
+      score,
+      kind: /\.m3u8(\?|#|$)/i.test(url) ? 'hls' : /\.mpd(\?|#|$)/i.test(url) ? 'dash' : 'direct',
+      title: name,
+      poster: '',
+      videoUrl: '',
+      audioUrl: '',
+      width: 0,
+      height: 0,
+      duration: 0,
+      size: 0,
+      source: 'scan'
+    }, opts || {}));
+  }
+
+  // 从页面内嵌 JSON / DOM 属性 / 网络记录里枚举候选。
+  function collectPageResources() {
+    try {
+      document.querySelectorAll('script:not([src])').forEach((script) => {
+        const text = script.textContent || '';
+        if (text.length < 20) return;
+        (text.match(/https?:\/\/[^"'\s<>\\`]+/g) || []).forEach((url) => addPageResource(url, { source: 'script' }));
+      });
+    } catch (_) {}
+
+    try {
+      document.querySelectorAll('*').forEach((el) => {
+        ['src', 'data-src', 'data-url', 'data-video', 'data-video-url', 'href'].forEach((attr) => {
+          const value = el.getAttribute && el.getAttribute(attr);
+          if (value) addPageResource(value, { source: 'dom' });
+        });
+      });
+    } catch (_) {}
+
+    try {
+      (performance.getEntriesByType('resource') || []).forEach((entry) => {
+        addPageResource(entry && entry.name, { source: 'performance' });
+      });
+    } catch (_) {}
+
+    vault.forEach((entry) => {
+      if (!entry || !entry.url) return;
+      addPageResource(entry.url, {
+        source: entry.source || 'network',
+        size: entry.size || 0,
+        videoUrl: entry.videoUrl || '',
+        audioUrl: entry.audioUrl || '',
+        kind: entry.kind || 'direct',
+        title: entry.label || '',
+        score: Math.max(75, mediaScore(entry.url))
+      });
+    });
+
+    return Array.from(pageResourceEntries.values());
   }
 
   // 解析 B站/DASH 类 playurl JSON：data.dash.video[]/audio[] 或 data.durl[]
@@ -308,6 +414,41 @@
   }
 
   // ===== 事件响应 =====
+  document.addEventListener(SCAN_RESOURCES, (event) => {
+    let data;
+    try { data = JSON.parse(event.detail); } catch (_) { data = {}; }
+    const id = (data && data.id) || '';
+    (async () => {
+      let items = collectPageResources();
+      // Layer 3：平台 adapter 从页面数据提取结构化资源（标题/封面/音轨配对）。
+      if (engine && typeof engine.extractFromPage === 'function') {
+        try {
+          const extra = await engine.extractFromPage(data.pageUrl || location.href, null);
+          if (Array.isArray(extra)) {
+            const byKey = new Map(items.map((item) => [item.key, item]));
+            extra.forEach((entry) => {
+              if (!entry || !entry.url) return;
+              const url = normalizeResourceUrl(entry.url);
+              if (!url) return;
+              const key = resourceKey(url);
+              const base = byKey.get(key) || {
+                id: 'page-' + key, key, url, source: 'adapter', score: 80,
+                kind: /\.m3u8(\?|#|$)/i.test(url) ? 'hls' : /\.mpd(\?|#|$)/i.test(url) ? 'dash' : 'direct',
+                title: '', poster: '', videoUrl: '', audioUrl: '', width: 0, height: 0, duration: 0, size: 0
+              };
+              const merged = Object.assign({}, base, entry, { url, key, score: Math.max(base.score || 0, entry.score || 80) });
+              byKey.set(key, merged);
+            });
+            items = Array.from(byKey.values());
+          }
+        } catch (e) {
+          console.warn('[VI-AUDIO] extractFromPage failed', e);
+        }
+      }
+      fire(SCAN_RESULT, { id, items: items.slice(0, 300) });
+    })();
+  });
+
   document.addEventListener(GET_RESOURCES, () => {
     fire(RESOURCES, {
       items: vault.map((entry) => ({

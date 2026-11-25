@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.8.14';
+  const EXT_VERSION = '1.9.0';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -21,6 +21,8 @@
   const PROBE_SIZE_RESPONSE = '__video_inspector_probe_size_response__';
   const GET_QUALITIES = '__video_inspector_get_qualities__';
   const QUALITIES = '__video_inspector_qualities__';
+  const SCAN_RESOURCES = '__video_inspector_scan_resources__';
+  const SCAN_RESULT = '__video_inspector_scan_result__';
   const FFMPEG_WORKER_URL = '__video_inspector_ffmpeg_worker_url__';
 
   try {
@@ -108,6 +110,8 @@
   let suppressClick = false;
   let downloadSeq = 0;
   let sizeSeq = 0;
+  let scanSeq = 0;
+  let integratingScanId = '';
   function itemKey(item) {
     return String(item && item.index) + ':' + ((item && item.src) || 'no-src');
   }
@@ -587,6 +591,14 @@
     applyCapturedResources(data.items);
   });
 
+  document.addEventListener(SCAN_RESULT, (event) => {
+    let data;
+    try { data = JSON.parse(event.detail); } catch (_) { return; }
+    if (!data || !Array.isArray(data.items)) return;
+    if (!integratingScanId || data.id !== integratingScanId) return;
+    integrateResources(data.items);
+  });
+
   function openAllVideos() {
     deepMode = false;
     openModal(document.body || document.documentElement);
@@ -765,6 +777,7 @@
 
     requestCapturedResources();
     requestQualities();
+    requestResourceScan();
     if (deepScanTimer) clearTimeout(deepScanTimer);
     if (capturePollTimer) clearInterval(capturePollTimer);
     deepScanTimer = setTimeout(requestCapturedResources, 2500);
@@ -775,6 +788,98 @@
     try {
       document.dispatchEvent(new CustomEvent(GET_RESOURCES, { detail: JSON.stringify({}) }));
     } catch (_) {}
+  }
+
+  function requestResourceScan() {
+    const id = 'scan-' + (++scanSeq);
+    integratingScanId = id;
+    try {
+      document.dispatchEvent(new CustomEvent(SCAN_RESOURCES, {
+        detail: JSON.stringify({ id, pageUrl: location.href })
+      }));
+    } catch (_) {
+      integratingScanId = '';
+    }
+    setTimeout(() => {
+      if (integratingScanId === id) integratingScanId = '';
+    }, 8000);
+  }
+
+  function normalizeMediaKey(url) {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      const u = new URL(url, location.href);
+      return (u.origin + u.pathname).replace(/\/$/, '');
+    } catch (_) {
+      return String(url).split('?')[0].split('#')[0];
+    }
+  }
+
+  // Layer 2：把发现的资源合并成逻辑视频，只追加新卡片，不改动已有 video 卡片。
+  function integrateResources(resources) {
+    if (!Array.isArray(resources) || !resources.length) return;
+    if (!modal || modal.hidden) return;
+    const existing = new Set();
+    currentItems.forEach((item) => {
+      const key = normalizeMediaKey(item.src);
+      if (key) existing.add(key);
+    });
+    const additions = [];
+    const MAX_ADD = 120;
+    resources.forEach((res) => {
+      if (!res || !res.url) return;
+      if (additions.length >= MAX_ADD) return;
+      if (/^blob:|^data:|^mse:/i.test(res.url)) return;
+      const key = normalizeMediaKey(res.url);
+      if (!key || existing.has(key)) return;
+      existing.add(key);
+      additions.push(buildResourceItem(res, currentItems.length + additions.length));
+    });
+    if (!additions.length) return;
+    currentItems = currentItems.concat(additions);
+    if (numEl) numEl.textContent = String(currentItems.length);
+    renderGrid();
+    refreshDownloadButtons();
+    loadSizes();
+  }
+
+  function buildResourceItem(res, index) {
+    const size = Number(res.size) || 0;
+    return {
+      index,
+      el: null,
+      ox: 0,
+      oy: 0,
+      label: res.title || resourceDisplayName(res.url),
+      customTitle: '',
+      selected: (Number(res.score) || 0) >= 80,
+      src: res.url,
+      poster: res.poster || '',
+      duration: res.duration ? formatDuration(res.duration) : '-',
+      resolution: res.width && res.height ? res.width + '×' + res.height : '-',
+      sizeText: formatSize(size),
+      paused: true,
+      currentTime: 0,
+      isResource: true,
+      discovered: true,
+      discoverySource: res.source || 'scan',
+      discoveredScore: Number(res.score) || 0,
+      videoUrl: res.videoUrl || '',
+      audioUrl: res.audioUrl || '',
+      resourceKind: res.kind || 'direct',
+      resourceId: '',
+      resourceType: '',
+      resourceSize: size
+    };
+  }
+
+  function resourceDisplayName(url) {
+    try {
+      const name = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop());
+      return name ? '资源 · ' + name.slice(0, 40) : '视频资源';
+    } catch (_) {
+      return '视频资源';
+    }
   }
 
   function requestQualities() {
@@ -932,6 +1037,12 @@
       chip.textContent = text;
       meta.appendChild(chip);
     });
+    if (item.discovered) {
+      const sourceChip = document.createElement('span');
+      sourceChip.className = 'vi-chip';
+      sourceChip.textContent = '发现 · ' + (item.discoverySource || 'scan');
+      meta.appendChild(sourceChip);
+    }
     if (task && task.phase === 'done') {
       const doneChip = document.createElement('span');
       doneChip.className = 'vi-chip done';
@@ -1264,6 +1375,22 @@
       candidates.push(candidate);
     };
 
+    if (item && item.discovered) {
+      // 发现的资源：按其自身类型下载，不用当前页面 URL 做平台解析（会串台）。
+      if (item.audioUrl && item.videoUrl) {
+        add({ kind: 'streams', url: item.videoUrl, videoUrl: item.videoUrl, audioUrl: item.audioUrl });
+      } else if (item.resourceKind === 'hls') {
+        add({ kind: 'hls', url: item.src });
+      } else if (item.resourceKind === 'dash') {
+        add({ kind: 'dash', url: item.src });
+      } else if (item.resourceKind === 'platform') {
+        add({ kind: 'platform', url: item.src, pageUrl: item.src });
+      } else if (item.src) {
+        add({ url: item.src });
+      }
+      return candidates;
+    }
+
     // 0. 平台解析（B站/抖音主动调接口），最高优先级。
     add({ kind: 'platform', url: (item && item.src) || location.href });
 
@@ -1314,7 +1441,7 @@
           kind: candidate.kind || '',
           videoUrl: candidate.videoUrl || '',
           audioUrl: candidate.audioUrl || '',
-          pageUrl: location.href
+          pageUrl: candidate.pageUrl || location.href
         });
       }
       if (task && task.cancelled) return false;
