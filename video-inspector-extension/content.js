@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.19.25';
+  const EXT_VERSION = '1.19.26';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -1076,7 +1076,7 @@
         refreshDownloadButtons();
         return;
       }
-      shadow.querySelectorAll('[data-action="download"]').forEach((btn) => {
+      shadow.querySelectorAll('[data-action="download"], [data-action="download-all"]').forEach((btn) => {
         btn.disabled = true;
         btn.textContent = t('msePreparing', { sec: left });
       });
@@ -2572,10 +2572,16 @@
     });
     const allButton = shadow.querySelector('[data-action="download-all"]');
     if (allButton) {
-      let active = 0;
-      downloadTasks.forEach((t) => { if (t.phase === 'downloading') active++; });
-      if (active > 0) setButtonLoading(allButton, true, t('downloading'));
-      else setButtonLoading(allButton, false);
+      if (mseCountdownTimer) {
+        const left = Math.max(0, Math.ceil((mseCountdownUntil - Date.now()) / 1000));
+        allButton.disabled = true;
+        allButton.textContent = t('msePreparing', { sec: left });
+      } else {
+        let active = 0;
+        downloadTasks.forEach((t) => { if (t.phase === 'downloading') active++; });
+        if (active > 0) setButtonLoading(allButton, true, t('downloading'));
+        else setButtonLoading(allButton, false);
+      }
     }
     renderDownloadSummary();
   }
@@ -2755,6 +2761,7 @@
     else if (action === 'feedback') window.open(FEEDBACK_URL, '_blank', 'noopener,noreferrer');
     else if (action === 'refresh' || action === 'search') runSearch();
     else if (action === 'download-all') {
+      if (mseCountdownTimer) return;
       currentItems.filter((item) => item.selected).forEach((item) => startDownload(item));
     } else if (action === 'dl-pause') {
       pauseAllDownloads();
