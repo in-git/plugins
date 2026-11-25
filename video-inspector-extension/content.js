@@ -6,7 +6,7 @@
 
   const HOTKEY = 's';
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.7.0';
+  const EXT_VERSION = '1.8.3';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -1069,8 +1069,9 @@
     let task = downloadTasks.get(key);
     if (task && task.phase === 'downloading') return task;
 
-    task = { cancelled: false, id: null, phase: 'downloading', item, phaseText: '', lastError: '' };
+    task = { cancelled: false, id: null, phase: 'downloading', item, phaseText: 'resolving', lastError: '' };
     downloadTasks.set(key, task);
+    refreshDownloadButtons();
 
     downloadItem(item, (_percent, phase) => {
       if (phase && task.phaseText !== phase) {

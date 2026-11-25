@@ -10,6 +10,8 @@
   const DOWNLOAD_RESOURCE = '__video_inspector_download_resource__';
   const PROBE_SIZE = '__video_inspector_probe_size__';
   const PROBE_SIZE_RESPONSE = '__video_inspector_probe_size_response__';
+  const GET_QUALITIES = '__video_inspector_get_qualities__';
+  const QUALITIES = '__video_inspector_qualities__';
   const controllers = new Map();
   const MAX_ITEMS = 400;
   const MAX_BYTES = 1024 * 1024 * 1024;
@@ -376,6 +378,23 @@
     })().catch(() => { clearTimeout(timer); respond(0); });
   });
 
+  document.addEventListener(GET_QUALITIES, (event) => {
+    let data;
+    try { data = JSON.parse(event.detail); } catch (_) { return; }
+    if (!data || !data.id) return;
+    const id = data.id;
+    const pageUrl = data.pageUrl || location.href;
+    if (!engine || typeof engine.resolveBilibiliQualities !== 'function') {
+      fire(QUALITIES, { id, qualities: [] });
+      return;
+    }
+    engine.resolveBilibiliQualities(pageUrl).then((qualities) => {
+      fire(QUALITIES, { id, qualities: qualities || [] });
+    }).catch(() => {
+      fire(QUALITIES, { id, qualities: [] });
+    });
+  });
+
   document.addEventListener(REQUEST, (event) => {
     let payload;
     try { payload = JSON.parse(event.detail); } catch (_) { return; }
@@ -408,47 +427,65 @@
 
       // 平台解析：B站/抖音等主动调接口拿真实流地址
       if (forceKind === 'platform' || (kind === 'blob' && typeof engine.resolvePlatform === 'function')) {
-        const resolved = await engine.resolvePlatform(url, payload.pageUrl);
+        const resolvedMeta = (typeof engine.referrerMeta === 'function')
+          ? engine.referrerMeta(payload.pageUrl || '', url || '', null, '')
+          : null;
+        const resolved = await engine.resolvePlatform(url, payload.pageUrl, payload.qualityId, resolvedMeta || undefined);
         if (resolved && resolved.videoUrl) {
           kind = resolved.kind;
           payload.videoUrl = resolved.videoUrl;
           payload.audioUrl = resolved.audioUrl || '';
           url = resolved.videoUrl;
           if (resolved.headers) payload.headers = resolved.headers;
+          if (resolved.userAgent) payload.userAgent = resolved.userAgent;
+          if (resolved.credentials) payload.credentials = resolved.credentials;
         } else {
           throw new Error('platform resolve failed');
         }
       }
+
+      // 带 Cookie 请求（TikTok CDN 直链必须 include 才 200）
+      const dlMeta = (payload.userAgent || payload.credentials)
+        ? {
+            userAgent: payload.userAgent || '',
+            referrer: payload.pageUrl || '',
+            headers: payload.headers || null,
+            credentials: payload.credentials || 'omit'
+          }
+        : null;
+      const dlArg = dlMeta
+        ? { __viMeta: dlMeta, __viHeaders: payload.headers || null }
+        : payload.headers;
 
       if (!url) throw new Error('empty url');
       if (kind === 'blob' || kind === 'record') throw new Error('needs_recording');
 
       let result;
       if (kind === 'streams' && payload.videoUrl) {
-        const v = await engine.fetchWhole(payload.videoUrl, controller.signal, onProgress, payload.headers);
+        const v = await engine.fetchWhole(payload.videoUrl, controller.signal, onProgress, dlArg);
         let a = null;
         if (payload.audioUrl) {
-          try { a = await engine.fetchWhole(payload.audioUrl, controller.signal, onProgress, payload.headers); }
+          try { a = await engine.fetchWhole(payload.audioUrl, controller.signal, onProgress, dlArg); }
           catch (_) { a = null; }
         }
         result = {
           tracks: a ? [v.tracks[0], a.tracks[0]] : [v.tracks[0]],
-          ext: 'mp4', duration: expectedDuration || 0, skipDurationCheck: false
+          ext: 'mp4', duration: expectedDuration || 0, skipDurationCheck: !!a
         };
       } else if (kind === 'streams' && videoUrl) {
-        const v = await engine.fetchWhole(videoUrl, controller.signal, onProgress);
+        const v = await engine.fetchWhole(videoUrl, controller.signal, onProgress, dlArg);
         let a = null;
         if (audioUrl) {
-          try { a = await engine.fetchWhole(audioUrl, controller.signal, onProgress); }
+          try { a = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg); }
           catch (_) { a = null; }
         }
         result = {
           tracks: a ? [v.tracks[0], a.tracks[0]] : [v.tracks[0]],
           ext: 'mp4', duration: expectedDuration || 0, skipDurationCheck: false
         };
-      } else if (kind === 'hls') result = await engine.downloadHls(url, controller.signal, onProgress, expectedDuration);
-      else if (kind === 'dash') result = await engine.downloadDash(url, controller.signal, onProgress, expectedDuration);
-      else result = await engine.fetchWhole(url, controller.signal, onProgress, payload.headers);
+      } else if (kind === 'hls') result = await engine.downloadHls(url, controller.signal, onProgress, expectedDuration, dlMeta || undefined);
+      else if (kind === 'dash') result = await engine.downloadDash(url, controller.signal, onProgress, expectedDuration, dlMeta || undefined);
+      else result = await engine.fetchWhole(url, controller.signal, onProgress, dlArg);
 
       let tracks = result.tracks || [result.blob];
       let finalBlob;
@@ -464,8 +501,23 @@
           }
           buffers.push(buf);
         }
-        finalBlob = await engine.mergeStreams(buffers);
-        finalExt = 'mp4';
+        // 视频轨本身已有音轨时不需要合并
+        let needMerge = true;
+        if (typeof engine.probeTracks === 'function') {
+          try { needMerge = !(await engine.probeTracks(buffers[0])).hasAudio; }
+          catch (_) { needMerge = true; }
+        }
+        if (!needMerge) {
+          finalBlob = tracks[0];
+          finalExt = result.ext || 'mp4';
+        } else try {
+          finalBlob = await engine.mergeStreams(buffers);
+          finalExt = 'mp4';
+        } catch (mergeError) {
+          // 合并失败（如音频是 MP3 无法注入 MP4 容器）：回退为仅保存视频轨，避免整体失败。
+          finalBlob = tracks[0];
+          finalExt = result.ext || 'mp4';
+        }
       } else {
         finalBlob = tracks[0];
         // 单轨 TS → 转封装为 MP4，方便直接播放
@@ -478,6 +530,20 @@
           } catch (_) {
             // 转封装失败则保留原始 TS
           }
+        }
+      }
+
+      // 最终校验：修正音轨数量异常
+      if (typeof engine.probeTracks === 'function') {
+        try {
+          const probe = await engine.probeTracks(await finalBlob.arrayBuffer());
+          if (probe.audioTracks > 1) {
+            // 2 条以上音轨是非法 MP4（Windows 报 0xC00D36E5），回退为原始视频轨
+            finalBlob = tracks[0];
+            finalExt = result.ext || 'mp4';
+          }
+        } catch (e) {
+          if (/no audio track/i.test(String(e && e.message))) throw e;
         }
       }
 
