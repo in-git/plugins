@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.19.27';
+  const EXT_VERSION = '1.19.28';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -2261,7 +2261,7 @@
   }
 
   // ===== 下载队列：最多 2 个并发，其余排队，批量下载有整体状态 =====
-  const MAX_CONCURRENT_DOWNLOADS = 2;
+  const MAX_CONCURRENT_DOWNLOADS = 1;
   const downloadQueue = [];
   const resumeJobs = new Map();
   let refreshTimer = 0;

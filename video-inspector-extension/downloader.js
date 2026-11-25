@@ -674,13 +674,23 @@
       const pick = (source) => {
         let list = vault.filter((x) => x && x.source === source && x.blob && x.blob.size > 1024);
         if (matchUrl) {
-          const matched = list.filter((x) => x.matchUrl === matchUrl);
-          if (matched.length) list = matched;
+          const clean = (u) => String(u || '').split('?')[0];
+          let matched = list.filter((x) => x.matchUrl === matchUrl);
+          if (!matched.length) matched = list.filter((x) => clean(x.matchUrl) === clean(matchUrl));
+          if (!matched.length) return undefined;
+          list = matched;
         }
         return list.sort((x, y) => createdAt(y) - createdAt(x))[0];
       };
-      const a = pick('mse-audio');
-      const v = pick('mse-video');
+      let a = pick('mse-audio');
+      let v = pick('mse-video');
+      // 严格匹配不到时（item.src 与分片 matchUrl 格式不同），退回最近一组，保证单视频下载可用。
+      if (matchUrl && (!a || !v)) {
+        const fallback = (source) => vault.filter((x) => x && x.source === source && x.blob && x.blob.size > 1024)
+          .sort((x, y) => createdAt(y) - createdAt(x))[0];
+        a = a || fallback('mse-audio');
+        v = v || fallback('mse-video');
+      }
       if (!a || !v) { console.warn('[VI-MSE-DIAG] need both audio+video MSE blobs', !!a, !!v, 'matchUrl', matchUrl); return false; }
       const base = String(customFilename || 'youtube-mse-mux').replace(/\.[^.]+$/, '').slice(0, 80) || 'youtube-mse-mux';
       const fname = base + '.mp4';
