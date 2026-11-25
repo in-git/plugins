@@ -1,0 +1,238 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- 黑白主题令牌 ---------- */
+:root {
+  color-scheme: light;
+  --canvas: 255 255 255;
+  --panel: 246 246 247;
+  --ink: 29 29 31;
+  --subtle: 134 134 139;
+  --muted: 184 184 189;
+  --line: 0 0 0;
+  --accent: 29 29 31;
+  --accent-press: 0 0 0;
+  --accent-ink: 255 255 255;
+  --danger: 199 54 47;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: 28 28 30;
+  --panel: 36 36 38;
+  --ink: 245 245 247;
+  --subtle: 152 152 157;
+  --muted: 110 110 115;
+  --line: 255 255 255;
+  --accent: 245 245 247;
+  --accent-press: 226 226 230;
+  --accent-ink: 28 28 30;
+  --danger: 255 105 97;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply overflow-hidden bg-canvas font-sans text-lead text-ink;
+  }
+
+  ::selection {
+    background: rgb(var(--ink) / 0.14);
+  }
+
+  .nb-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line) / 0.16) transparent;
+  }
+
+  .nb-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .nb-scroll::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgb(var(--line) / 0.14);
+  }
+
+  .nb-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* 拖动侧栏宽度时锁定全局指针与选中 */
+  body.is-resizing-sidebar {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  body.is-resizing-sidebar * {
+    cursor: col-resize !important;
+  }
+}
+
+@layer components {
+  .nb-btn {
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-control border border-hairline
+      bg-canvas px-3 text-body font-medium text-ink transition-colors duration-150
+      hover:bg-ink/[0.04] active:bg-ink/[0.07]
+      disabled:pointer-events-none disabled:opacity-40;
+  }
+
+  .nb-btn-primary {
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-control bg-accent px-3.5
+      text-body font-medium text-accentink transition-colors duration-150
+      hover:bg-accent-press active:brightness-95
+      disabled:pointer-events-none disabled:opacity-40;
+  }
+
+  .nb-icon-btn {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-[9px] text-subtle
+      transition-colors duration-150 hover:bg-ink/[0.05] hover:text-ink active:bg-ink/[0.08];
+  }
+
+  .nb-field {
+    @apply h-9 w-full rounded-control border border-hairline bg-panel px-3 text-body text-ink
+      placeholder:text-muted outline-none transition duration-150
+      focus:bg-canvas focus:ring-2 focus:ring-ink/10;
+  }
+
+  /* ---------- 侧栏目录树 ---------- */
+
+  .tree-item {
+    @apply relative flex h-9 cursor-default select-none items-center gap-1.5 rounded-[8px] pr-2
+      text-[16px] leading-[22px] text-subtle transition-colors duration-100 hover:bg-ink/[0.045];
+  }
+
+  .tree-item.is-active {
+    @apply bg-ink/[0.07] font-medium text-ink;
+  }
+
+  /* 拖拽中的源行 */
+  .tree-item.is-dragging {
+    @apply bg-ink/[0.04] opacity-45;
+  }
+
+  /* 排序插入指示线 */
+  .tree-item::before {
+    content: '';
+    @apply pointer-events-none absolute left-1 right-1 h-[2px] rounded-full bg-ink opacity-0
+      transition-opacity duration-75;
+  }
+
+  .tree-item.is-drop-before::before {
+    @apply -top-px opacity-100;
+  }
+
+  .tree-item.is-drop-after::before {
+    @apply -bottom-px opacity-100;
+  }
+
+  /* 拖入目录内部 */
+  .tree-item.is-drop-inside {
+    @apply bg-ink/[0.10] text-ink;
+    box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.28);
+  }
+
+  /* 跟随指针的拖影 */
+  .tree-drag-overlay {
+    @apply flex h-9 w-[224px] items-center gap-1.5 rounded-[8px] border border-hairline
+      bg-canvas px-2 text-[16px] leading-[22px] text-ink shadow-modal;
+    transform: rotate(-1deg);
+  }
+
+  .tree-chevron {
+    @apply flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] text-muted
+      transition-transform duration-150 hover:bg-ink/[0.06] hover:text-ink;
+  }
+
+  .tree-chevron.is-open {
+    transform: rotate(90deg);
+  }
+
+  .tree-chevron.is-leaf {
+    @apply opacity-0;
+  }
+
+  .tree-icon {
+    @apply flex h-[18px] w-[18px] shrink-0 items-center justify-center;
+  }
+
+  .tree-title {
+    @apply min-w-0 flex-1 truncate;
+  }
+
+  .tree-rename {
+    @apply min-w-0 flex-1 rounded-[5px] border border-ink/25 bg-canvas px-1 py-0.5
+      text-[16px] text-ink outline-none;
+  }
+
+  /* ---------- 侧栏宽度分隔条 ---------- */
+
+  .nb-splitter {
+    @apply relative z-10 -ml-px w-[5px] shrink-0 cursor-col-resize;
+    touch-action: none;
+  }
+
+  .nb-splitter::after {
+    content: '';
+    @apply pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent
+      transition-colors duration-150;
+  }
+
+  .nb-splitter:hover::after,
+  body.is-resizing-sidebar .nb-splitter::after {
+    @apply bg-ink/20;
+  }
+
+  /* ---------- 右键菜单 ---------- */
+
+  .menu-panel {
+    @apply min-w-[184px] rounded-[12px] border border-hairline bg-canvas p-1 shadow-modal;
+  }
+
+  .menu-item {
+    @apply flex h-8 w-full items-center gap-2.5 rounded-[7px] px-2.5 text-left text-body
+      text-ink transition-colors duration-100 hover:bg-ink/[0.06];
+  }
+
+  .menu-item.is-danger {
+    @apply text-danger hover:bg-danger/10;
+  }
+
+  .menu-sep {
+    @apply mx-1 my-1 h-px bg-hairline;
+  }
+
+  /* ---------- 内容行 ---------- */
+
+  .nb-row {
+    @apply flex w-full items-center gap-3 rounded-control px-3 py-2.5 text-left
+      transition-colors duration-100 hover:bg-ink/[0.04];
+  }
+
+  .nb-tile {
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-panel text-subtle;
+  }
+
+  /* ---------- 空状态 / 弹层 ---------- */
+
+  .nb-empty {
+    @apply flex flex-col items-center justify-center text-center;
+  }
+
+  .nb-dialog {
+    @apply rounded-modal border border-hairline bg-canvas shadow-modal;
+  }
+}

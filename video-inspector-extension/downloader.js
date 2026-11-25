@@ -18,6 +18,9 @@
   const SCAN_RESULT = '__video_inspector_scan_result__';
   const MUX_REQUEST = '__video_inspector_mux_request__';
   const MUX_RESPONSE = '__video_inspector_mux_response__';
+  const MSE_DIRECT_REQUEST = '__video_inspector_mse_direct_request__';
+  const MSE_DIRECT_RESPONSE = '__video_inspector_mse_direct_response__';
+  const MANIFEST_FOUND = '__video_inspector_manifest_found__';
   const controllers = new Map();
   const jobLocks = new Map();
   const jobControllers = new Map();
@@ -450,6 +453,38 @@
     return Array.from(pageResourceEntries.values());
   }
 
+  // ===== webRequest 嗅探到的 manifest 入库 =====
+  const sniffedManifests = new Set();
+  document.addEventListener(MANIFEST_FOUND, (event) => {
+    let data;
+    try { data = JSON.parse(event.detail); } catch (_) { return; }
+    if (!data || !data.url || !/^https?:\/\//i.test(data.url)) return;
+    if (sniffedManifests.has(data.url)) return;
+    sniffedManifests.add(data.url);
+    const kind = /\.mpd(\?|#|$)/i.test(data.url) || data.kind === 'dash' ? 'dash' : 'hls';
+    // 直接登记为 manifest 资源；downloadHls/downloadDash 会在真正下载时读清单配对音轨
+    addPageResource(data.url, { source: 'webrequest', kind, score: 95 });
+    storeUrl(data.url, 'webrequest');
+    // 异步校验清单有效性（含独立音轨标记），只写日志不阻断入库
+    if (engine && typeof engine.inspectManifestUrl === 'function') {
+      const pageUrl = location.href;
+      const meta = (typeof engine.referrerMeta === 'function')
+        ? engine.referrerMeta(pageUrl, data.url, null, '') : null;
+      engine.inspectManifestUrl(data.url, meta).then((info) => {
+        if (!info || !info.ok) {
+          console.warn('[VI-SNIFF] manifest unusable', data.url.slice(0, 160), info && info.error);
+          return;
+        }
+        console.log('[VI-SNIFF] manifest', { kind: info.kind, hasAudioTrack: info.hasAudioTrack, url: data.url.slice(0, 160) });
+        if (info.hasAudioTrack) {
+          const key = resourceKey(data.url);
+          const prev = pageResourceEntries.get(key);
+          if (prev) pageResourceEntries.set(key, Object.assign({}, prev, { hasAudioTrack: true }));
+        }
+      }).catch((e) => console.warn('[VI-SNIFF] inspect failed', String(e && e.message || e)));
+    }
+  });
+
   // 解析 B站/DASH 类 playurl JSON：data.dash.video[]/audio[] 或 data.durl[]
   function parsePlaylistJson(text) {
     let data;
@@ -574,10 +609,112 @@
     return origSend.apply(this, arguments);
   };
 
+  // 临时诊断（v1.17.0）：验证 MSE appendBuffer 能否拿到 YouTube 音频分片
+  const mseDiag = {
+    nativeMediaSource: !!NativeMediaSource,
+    hooked: false,
+    addCalls: 0,
+    appendCalls: 0,
+    buffers: [],
+    summary() {
+      return {
+        nativeMediaSource: this.nativeMediaSource,
+        hooked: this.hooked,
+        addCalls: this.addCalls,
+        appendCalls: this.appendCalls,
+        buffers: this.buffers.map((b) => ({ mimeType: b.mimeType, calls: b.calls, bytes: b.bytes }))
+      };
+    }
+  };
+  try { window.__viMseDiag = mseDiag; } catch (_) {}
+
+  // 诊断用：在控制台执行 window.__viDownloadMseAudio() 直接保存当前攒到的音频分片
+  try {
+    window.__viMseDump = function () {
+      const out = vault.filter((item) => item && /^mse-(audio|video)$/.test(item.source || '') && item.blob)
+        .map((item) => ({ id: item.id, source: item.source, size: item.blob.size, type: item.type }));
+      console.log('[VI-MSE-DIAG] entries', JSON.stringify(out));
+      return out;
+    };
+    window.__viDownloadMseAudio = async function () {
+      const entries = vault.filter((item) => item && item.source === 'mse-audio' && item.blob && item.blob.size > 1024)
+        .sort((a, b) => b.blob.size - a.blob.size);
+      const entry = entries[0];
+      if (!entry) { console.warn('[VI-MSE-DIAG] no audio MSE blob yet'); return false; }
+      const head = new Uint8Array(await entry.blob.slice(0, 32).arrayBuffer());
+      const hex = Array.from(head).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      let ext = 'bin';
+      if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) ext = 'webm';
+      else if ((head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) ||
+               (head[8] === 0x66 && head[9] === 0x74 && head[10] === 0x79 && head[11] === 0x70)) ext = 'm4a';
+      console.log('[VI-MSE-DIAG] audio head', hex, 'size', entry.blob.size, 'type', entry.type, 'entries', entries.length);
+      saveHref(URL.createObjectURL(entry.blob), 'youtube-audio.' + ext);
+      return true;
+    };
+    window.__viDownloadMseVideo = async function () {
+      const entries = vault.filter((item) => item && item.source === 'mse-video' && item.blob && item.blob.size > 1024)
+        .sort((a, b) => b.blob.size - a.blob.size);
+      const entry = entries[0];
+      if (!entry) { console.warn('[VI-MSE-DIAG] no video MSE blob yet'); return false; }
+      const head = new Uint8Array(await entry.blob.slice(0, 32).arrayBuffer());
+      const hex = Array.from(head).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      console.log('[VI-MSE-DIAG] video head', hex, 'size', entry.blob.size, 'type', entry.type, 'entries', entries.length);
+      saveHref(URL.createObjectURL(entry.blob), 'youtube-video.mp4');
+      return true;
+    };
+    // 诊断用：把攒到的 MSE 音视频分流送进 offscreen ffmpeg 合并，直接下载 MP4
+    window.__viMseMuxTest = async function (customFilename, forcedMuxId) {
+      // 关键：按创建时间取最近的一组，不能按大小取（同页面连续播 A、B 时会取到 A 的旧分片）。
+      // id 形如 'mse-<序号>-<时间戳>'，用末段时间戳排序；无时间戳时退回序号。
+      const createdAt = (entry) => {
+        const parts = String(entry && entry.id || '').split('-');
+        const n = Number(parts[parts.length - 1]);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const a = vault.filter((x) => x && x.source === 'mse-audio' && x.blob && x.blob.size > 1024)
+        .sort((x, y) => createdAt(y) - createdAt(x))[0];
+      const v = vault.filter((x) => x && x.source === 'mse-video' && x.blob && x.blob.size > 1024)
+        .sort((x, y) => createdAt(y) - createdAt(x))[0];
+      if (!a || !v) { console.warn('[VI-MSE-DIAG] need both audio+video MSE blobs', !!a, !!v); return false; }
+      const base = String(customFilename || 'youtube-mse-mux').replace(/\.[^.]+$/, '').slice(0, 80) || 'youtube-mse-mux';
+      const fname = base + '-' + Date.now() + '.mp4';
+      console.log('[VI-MSE-DIAG] mux(ffmpeg offscreen) start', { audio: a.blob.size, video: v.blob.size, at: a.type, vt: v.type, file: fname, aid: a.id, vid: v.id });
+      try {
+        const muxId = forcedMuxId || ('mse-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+        const r = await muxViaOffscreen(muxId, v.blob, a.blob, fname);
+        console.log('[VI-MSE-DIAG] mux ok', r);
+        return true;
+      } catch (e) {
+        console.warn('[VI-MSE-DIAG] mux failed', String(e && e.message || e));
+        return false;
+      }
+    };
+  } catch (_) {}
+
+  // 模态框下载：直接触发诊断函数 __viMseMuxTest()，与控制台命令走完全相同的函数。
+  // 通道只负责跨 world 传递“调用请求/结果”，不重复实现任何取流或合并逻辑。
+  document.addEventListener(MSE_DIRECT_REQUEST, async (event) => {
+    let detail;
+    try { detail = JSON.parse(event.detail); } catch (_) { return; }
+    const id = detail && detail.id;
+    if (!id) return;
+    if (typeof window.__viMseMuxTest !== 'function') {
+      fire(MSE_DIRECT_RESPONSE, { id, ok: false, error: '__viMseMuxTest unavailable' });
+      return;
+    }
+    try {
+      const ok = await window.__viMseMuxTest(detail.filename, id);
+      fire(MSE_DIRECT_RESPONSE, { id, ok: !!ok, downloaded: !!ok });
+    } catch (e) {
+      fire(MSE_DIRECT_RESPONSE, { id, ok: false, error: String(e && e.message || e) });
+    }
+  });
+
   if (NativeMediaSource && NativeMediaSource.prototype && NativeMediaSource.prototype.addSourceBuffer) {
     const origAddSourceBuffer = NativeMediaSource.prototype.addSourceBuffer;
     const origEndOfStream = NativeMediaSource.prototype.endOfStream;
     let mseIndex = 0;
+    mseDiag.hooked = true;
     if (origEndOfStream) {
       NativeMediaSource.prototype.endOfStream = function () {
         const result = origEndOfStream.apply(this, arguments);
@@ -597,13 +734,31 @@
       const chunks = [];
       let total = 0, stored = false;
       const id = 'mse-' + (++mseIndex) + '-' + Date.now();
+      const mt = String(mimeType || '');
+      const isAudio = /^audio\//i.test(mt) || /opus|mp4a\.40\.|aac/i.test(mt);
+      const role = isAudio ? 'audio' : 'video';
+      const diagBuf = { mimeType: mt, calls: 0, bytes: 0, role };
+      mseDiag.buffers.push(diagBuf);
+      mseDiag.addCalls++;
+      console.log('[VI-MSE-DIAG] addSourceBuffer', mt, '=>', role);
       const matchUrl = objectUrlTargets.get(this) || '';
-      const state = { finalized: false, timer: 0, update: null };
+      const state = { finalized: false, timer: 0, update: null, role };
       const update = () => {
         if (!chunks.length || total <= 1024) return;
-        const blob = new Blob(chunks, { type: /video/i.test(mimeType || '') ? mimeType : 'video/mp4' });
+        const blob = new Blob(chunks, { type: mt || (isAudio ? 'audio/webm' : 'video/mp4') });
+        const url = 'mse://' + role + '/' + id;
         if (!stored) {
-          store({ id, url: 'mse://video/' + id, matchUrl, type: blob.type, size: blob.size, blob, source: 'mse', label: 'MSE 视频流', kind: 'video' });
+          store({
+            id,
+            url,
+            matchUrl,
+            type: blob.type,
+            size: blob.size,
+            blob,
+            source: 'mse-' + role,
+            label: isAudio ? 'MSE 音频流' : 'MSE 视频流',
+            kind: isAudio ? 'audio' : 'video'
+          });
           stored = vault.some((entry) => entry.id === id);
         } else {
           const entry = vault.find((item) => item.id === id);
@@ -619,6 +774,8 @@
         if (origAppend) {
           sourceBuffer.appendBuffer = function (data) {
             try {
+              const bytes = data && data.byteLength ? data.byteLength : 0;
+              if (bytes) { diagBuf.calls++; diagBuf.bytes += bytes; mseDiag.appendCalls++; }
               if (data && data.byteLength && total < MAX_BYTES) {
                 chunks.push(new Uint8Array(data.slice ? data.slice(0) : new Uint8Array(data)));
                 total += data.byteLength;
@@ -629,6 +786,10 @@
         }
       } catch (_) {}
       state.timer = setInterval(update, 1500);
+      const diagTimer = setInterval(() => {
+        console.log('[VI-MSE-DIAG] summary', JSON.stringify(mseDiag.summary()));
+      }, 5000);
+      setTimeout(() => { clearInterval(diagTimer); }, 5 * 60 * 1000);
       setTimeout(() => {
         if (state.finalized) return;
         state.finalized = true;
@@ -1050,7 +1211,7 @@
           tracks: a ? [v.blob, a.tracks[0]] : [v.blob],
           ext: v.ext || 'mp4', duration: expectedDuration || 0, skipDurationCheck: false
         };
-      } else if (kind === 'hls') result = await engine.downloadHls(url, controller.signal, onProgress, expectedDuration, dlMeta || undefined);
+      } else if (kind === 'hls') result = await engine.downloadHls(url, controller.signal, onProgress, dlMeta || undefined);
       else if (kind === 'dash') result = await engine.downloadDash(url, controller.signal, onProgress, expectedDuration, dlMeta || undefined);
       else {
         const r = await fetchMainTrack(url, dlArg, dlMeta || undefined);

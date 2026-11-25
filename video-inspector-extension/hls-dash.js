@@ -177,7 +177,7 @@
     return plain;
   }
 
-  async function downloadHls(playlistUrl, signal, onProgress, expectedDuration, meta) {
+  async function downloadHls(playlistUrl, signal, onProgress, meta) {
     let text = await fetchText(playlistUrl, signal, meta);
     let base = playlistUrl;
     let audioPlaylistUrl = '';
@@ -508,13 +508,6 @@
     return { ok: true, size: blob.size };
   }
 
-  // 判断 buffer 是否为 fragmented MP4（首 8 字节是 ftyp/moof/styp/moov）
-  function isFmp4Head(bytes) {
-    const b = new Uint8Array(bytes.slice(0, 8));
-    const fourcc = String.fromCharCode(b[4], b[5], b[6], b[7]);
-    return fourcc === 'ftyp' || fourcc === 'moof' || fourcc === 'styp' || fourcc === 'moov';
-  }
-
   // 判断是否 MPEG-TS（同步字节 0x47）
   function isTsHead(bytes) {
     return new Uint8Array(bytes.slice(0, 1))[0] === 0x47;
@@ -675,7 +668,7 @@
   //   1. 两条轨必须用不同的 track_id，否则 getTrackById 永远命中的是视频轨，音轨不会被写出；
   //   2. addSample 必须传 sample.data + sample 元数据，否则样本 size/dts 全错；
   //   3. 初始化段要一次包含两条轨（mp4box 自带的 initializeSegmentation 是按轨拆分的）。
-  async function mergeStreams(buffers, onProgress) {
+  async function mergeStreams(buffers) {
     if (!buffers || buffers.length < 2) return new Blob([buffers[0]], { type: 'video/mp4' });
     if (typeof window.MP4Box === 'undefined') throw new Error('mp4box unavailable');
     const ISO = window.ISOFile;
@@ -757,7 +750,6 @@
     const chunks = [];
     outFile.onSegment = (id, user, buffer) => {
       chunks.push(buffer);
-      if (onProgress) onProgress(chunks.length);
     };
 
     // 初始化分段：一次写入 video+audio 两条轨（等价于 mp4box 内部 writeInitializationSegment）
@@ -800,38 +792,44 @@
     return BILI_QUALITY_MAP[id] || (id + 'P');
   }
 
-  // 平台解析器：返回 { videoUrl, audioUrl, kind, headers, qualities } 或 null
+  // 平台解析器：返回 { videoUrl, audioUrl, kind, headers } 或 null
   async function resolvePlatform(url, pageUrl, qualityId, meta) {
-    const host = (() => { try { return new URL(pageUrl || location.href).hostname; } catch (_) { return ''; } })();
+    switch (detectPlatform(pageUrl)) {
+      case 'bilibili': return resolveBilibili(url, pageUrl, qualityId, meta);
+      case 'douyin': return resolveDouyin(url, pageUrl, meta);
+      case 'tiktok': return resolveTiktok(url, pageUrl, meta);
+      case 'youtube': return resolveYoutube(url, pageUrl, qualityId, meta);
+      default: return null;
+    }
+  }
 
-    if (/bilibili\.com$/.test(host) || /\.bilibili\.com$/.test(host)) {
-      return resolveBilibili(url, pageUrl, qualityId, meta);
-    }
-    if (/douyin\.com$/.test(host) || /\.douyin\.com$/.test(host)) {
-      return resolveDouyin(url, pageUrl, meta);
-    }
-    if (/tiktok\.com$/.test(host) || /\.tiktok\.com$/.test(host)) {
-      return resolveTiktok(url, pageUrl, meta);
-    }
-    return null;
+  const BILI_HEADERS = { Referer: 'https://www.bilibili.com/' };
+
+  async function bilibiliContext(pageUrl, meta) {
+    const bv = /(BV[0-9A-Za-z]+)/.exec(pageUrl || location.href);
+    if (!bv) return null;
+    const res = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bv[1], withMeta(meta, { credentials: 'omit' }));
+    const json = await res.json();
+    const cid = json && json.data && json.data.cid;
+    return cid ? { bv: bv[1], cid } : null;
+  }
+
+  function bilibiliPlayUrl(ctx, fnval) {
+    return 'https://api.bilibili.com/x/player/playurl?bvid=' + ctx.bv + '&cid=' + ctx.cid + '&fnval=' + fnval + '&fnver=0&fourk=1';
+  }
+
+  async function fetchBilibiliDash(ctx, meta) {
+    const res = await fetch(bilibiliPlayUrl(ctx, 16), withMeta(meta, { credentials: 'omit', headers: BILI_HEADERS }));
+    const json = await res.json();
+    return (json && json.data && json.data.dash) || null;
   }
 
   // 获取 B站视频的清晰度列表（不下载，只列元数据）
   async function resolveBilibiliQualities(pageUrl, meta) {
     try {
-      const bv = /(BV[0-9A-Za-z]+)/.exec(pageUrl || location.href);
-      if (!bv) return [];
-      const viewUrl = 'https://api.bilibili.com/x/web-interface/view?bvid=' + bv[1];
-      const viewRes = await fetch(viewUrl, withMeta(meta, { credentials: 'omit' }));
-      const viewJson = await viewRes.json();
-      const cid = viewJson && viewJson.data && viewJson.data.cid;
-      if (!cid) return [];
-
-      const headers = { Referer: 'https://www.bilibili.com/' };
-      const playUrl16 = 'https://api.bilibili.com/x/player/playurl?bvid=' + bv[1] + '&cid=' + cid + '&fnval=16&fnver=0&fourk=1';
-      const res16 = await fetch(playUrl16, withMeta(meta, { credentials: 'omit', headers }));
-      const json16 = await res16.json();
-      const dash = json16 && json16.data && json16.data.dash;
+      const ctx = await bilibiliContext(pageUrl, meta);
+      if (!ctx) return [];
+      const dash = await fetchBilibiliDash(ctx, meta);
       if (!dash || !Array.isArray(dash.video)) return [];
 
       const qualities = dash.video.map((v) => ({
@@ -856,22 +854,13 @@
 
   async function resolveBilibili(url, pageUrl, qualityId, meta) {
     try {
-      // 从页面 URL 提取 BV 号
-      const bv = /(BV[0-9A-Za-z]+)/.exec(pageUrl || location.href);
-      if (!bv) return null;
-      const viewUrl = 'https://api.bilibili.com/x/web-interface/view?bvid=' + bv[1];
-      const viewRes = await fetch(viewUrl, withMeta(meta, { credentials: 'omit' }));
-      const viewJson = await viewRes.json();
-      const cid = viewJson && viewJson.data && viewJson.data.cid;
-      if (!cid) return null;
-      const headers = { Referer: 'https://www.bilibili.com/' };
+      const ctx = await bilibiliContext(pageUrl, meta);
+      if (!ctx) return null;
+      const headers = BILI_HEADERS;
 
       // 若指定了清晰度，优先用 DASH 拿对应档
       if (qualityId) {
-        const playUrl16 = 'https://api.bilibili.com/x/player/playurl?bvid=' + bv[1] + '&cid=' + cid + '&fnval=16&fnver=0&fourk=1';
-        const res16 = await fetch(playUrl16, withMeta(meta, { credentials: 'omit', headers }));
-        const json16 = await res16.json();
-        const dash = json16 && json16.data && json16.data.dash;
+        const dash = await fetchBilibiliDash(ctx, meta);
         if (dash && Array.isArray(dash.video) && dash.video.length) {
           const videoArr = dash.video.slice().sort((a, b) => (b.id || 0) - (a.id || 0));
           const chosen = videoArr.find((v) => String(v.id) === String(qualityId)) || videoArr[0];
@@ -884,8 +873,7 @@
       }
 
       // 未指定清晰度：首选 fnval=0 单流 MP4
-      const playUrl0 = 'https://api.bilibili.com/x/player/playurl?bvid=' + bv[1] + '&cid=' + cid + '&fnval=0&fnver=0&fourk=1';
-      const res0 = await fetch(playUrl0, withMeta(meta, { credentials: 'omit', headers }));
+      const res0 = await fetch(bilibiliPlayUrl(ctx, 0), withMeta(meta, { credentials: 'omit', headers }));
       const json0 = await res0.json();
       const durl = json0 && json0.data && json0.data.durl;
       if (Array.isArray(durl) && durl.length) {
@@ -894,10 +882,7 @@
       }
 
       // 退回 DASH（最高档）
-      const playUrl16 = 'https://api.bilibili.com/x/player/playurl?bvid=' + bv[1] + '&cid=' + cid + '&fnval=16&fnver=0&fourk=1';
-      const res16 = await fetch(playUrl16, withMeta(meta, { credentials: 'omit', headers }));
-      const json16 = await res16.json();
-      const dash = json16 && json16.data && json16.data.dash;
+      const dash = await fetchBilibiliDash(ctx, meta);
       if (!dash) return null;
       const pick = (arr) => {
         if (!Array.isArray(arr) || !arr.length) return '';
@@ -913,10 +898,121 @@
     }
   }
 
+  // ===== YouTube: JS-less InnerTube client 拿音视频直链 =====
+  // WEB 播放器当前是 SABR-only，adaptiveFormats 没有 url；改用不需要 player JS 的胶囊客户端，
+  // 它们返回的 adaptiveFormats[].url 是普通直链，无 signatureCipher / n 参数，可直接 Range 下载。
+  const YT_INNERTUBE = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+  const YT_CLIENTS = [
+    { name: 'ANDROID_VR', id: 28, version: '1.60.19', androidSdk: 32 },
+    { name: 'VISIONOS', id: 101, version: '1.02' }
+  ];
+
+  function youtubeVideoId(pageUrl) {
+    const s = String(pageUrl || '');
+    let m = /[?&]v=([0-9A-Za-z_-]{11})/.exec(s);
+    if (m) return m[1];
+    m = /youtu\.be\/([0-9A-Za-z_-]{11})/.exec(s);
+    if (m) return m[1];
+    m = /(?:embed|shorts|live)\/([0-9A-Za-z_-]{11})/.exec(s);
+    return m ? m[1] : '';
+  }
+
+  function youtubePickFormats(info, qualityId) {
+    const formats = (info && info.streamingData && info.streamingData.adaptiveFormats) || [];
+    const usable = formats.filter((f) => f && f.url && /^https?:\/\//i.test(f.url));
+    const audios = usable.filter((f) => /^audio\//i.test(f.mimeType || ''));
+    const videos = usable.filter((f) => /^video\//i.test(f.mimeType || ''));
+    const audio = audios.slice().sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0))[0] || null;
+    let video = null;
+    if (qualityId) {
+      video = videos.find((f) => String(f.itag) === String(qualityId)) || null;
+    }
+    if (!video) {
+      const ranked = videos.slice().sort((a, b) => {
+        const ah = Number((a.qualityLabel || '').match(/\d+/)) || 0;
+        const bh = Number((b.qualityLabel || '').match(/\d+/)) || 0;
+        if (bh !== ah) return bh - ah;
+        return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
+      });
+      video = ranked[0] || null;
+    }
+    return { video, audio, videos, audios };
+  }
+
+  async function youtubePlayerRequest(videoId, client, meta) {
+    const clientBody = {
+      clientName: client.name,
+      clientVersion: client.version,
+      hl: 'en',
+      gl: 'US'
+    };
+    if (client.androidSdk) clientBody.androidSdkVersion = client.androidSdk;
+    const body = {
+      context: { client: clientBody },
+      videoId,
+      contentCheckOk: true,
+      racyCheckOk: true
+    };
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-YouTube-Client-Name': String(client.id),
+      'X-YouTube-Client-Version': client.version
+    };
+    const res = await fetch(YT_INNERTUBE, withMeta(meta, {
+      method: 'POST',
+      credentials: 'omit',
+      headers,
+      body: JSON.stringify(body),
+      [INTERNAL]: true
+    }));
+    if (!res.ok) throw new Error('InnerTube ' + client.name + ' HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function resolveYoutube(url, pageUrl, qualityId, meta) {
+    const videoId = youtubeVideoId(pageUrl) || youtubeVideoId(url);
+    if (!videoId) return null;
+    const errors = [];
+    for (const client of YT_CLIENTS) {
+      try {
+        const info = await youtubePlayerRequest(videoId, client, meta || null);
+        const status = info && info.playabilityStatus && info.playabilityStatus.status;
+        if (status !== 'OK') {
+          errors.push(client.name + ': ' + status + ' ' + String((info && info.playabilityStatus && info.playabilityStatus.reason) || ''));
+          continue;
+        }
+        const picked = youtubePickFormats(info, qualityId);
+        if (!picked.video || !picked.audio) {
+          errors.push(client.name + ': no adaptive video/audio url');
+          continue;
+        }
+        console.log('[VI-YT] resolved', {
+          client: client.name,
+          videoItag: picked.video.itag,
+          videoQuality: picked.video.qualityLabel || '',
+          audioItag: picked.audio.itag,
+          audioMime: (picked.audio.mimeType || '').split(';')[0]
+        });
+        return {
+          videoUrl: picked.video.url,
+          audioUrl: picked.audio.url,
+          kind: 'streams',
+          headers: {},
+          quality: picked.video.qualityLabel || String(picked.video.itag || ''),
+          ytClient: client.name
+        };
+      } catch (e) {
+        errors.push(client.name + ': ' + String(e && e.message || e));
+      }
+    }
+    console.warn('[VI-YT] all InnerTube clients failed', errors);
+    return null;
+  }
+
   const DOUYIN_MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
   const DOUYIN_REFERER = 'https://www.douyin.com/';
 
-  function douyinDecode(raw) {
+  function decodePlatformUrl(raw) {
     if (!raw) return '';
     let text = String(raw);
     try { text = decodeURIComponent(text); } catch (_) {}
@@ -926,7 +1022,7 @@
   function pickDouyinUrl(node) {
     // node 可能是字符串、{url_list:[...]}、[{...}] 等结构
     if (!node) return '';
-    if (typeof node === 'string') return douyinDecode(node);
+    if (typeof node === 'string') return decodePlatformUrl(node);
     if (Array.isArray(node)) {
       for (const item of node) {
         const found = pickDouyinUrl(item);
@@ -936,7 +1032,7 @@
     }
     if (typeof node === 'object') {
       if (Array.isArray(node.url_list) && node.url_list.length) {
-        const list = node.url_list.map(douyinDecode).filter((u) => /^https?:\/\//i.test(u));
+        const list = node.url_list.map(decodePlatformUrl).filter((u) => /^https?:\/\//i.test(u));
         if (list.length) return list[0];
       }
       for (const key of ['play_addr', 'playAddr', 'play_addr_h264', 'download_addr', 'downloadAddr']) {
@@ -1031,13 +1127,13 @@
     for (const re of [playRe, playRe2, urlListRe]) {
       const hit = re.exec(html);
       if (hit && hit[1]) {
-        const decoded = douyinDecode(hit[1]);
+        const decoded = decodePlatformUrl(hit[1]);
         if (/^https?:\/\//i.test(decoded)) {
           // 正则兜底时单独再找一次音频地址
           let audio = '';
           const musicRe = /"music"\s*:\s*\{[\s\S]{0,2000}?"play_url"\s*:\s*\{[\s\S]{0,600}?"url_list"\s*:\s*\[\s*"([^"]+)"/i;
           const musicHit = musicRe.exec(html);
-          if (musicHit && musicHit[1]) audio = douyinDecode(musicHit[1]);
+          if (musicHit && musicHit[1]) audio = decodePlatformUrl(musicHit[1]);
           return { videoUrl: decoded, audioUrl: audio };
         }
       }
@@ -1088,7 +1184,7 @@
         const patterns = [/playAddr"\s*:\s*"(.*?)"/, /videoUrl"\s*:\s*"(.*?)"/, /bytevod\S*?":\s*"(.*?)"/];
         for (const re of patterns) {
           const m = re.exec(html || '');
-          if (m && m[1]) { target = douyinDecode(m[1]); break; }
+          if (m && m[1]) { target = decodePlatformUrl(m[1]); break; }
         }
       }
 
@@ -1140,7 +1236,7 @@
         try {
           const domVideo = document.querySelector('video[src], video source[src]');
           const domSrc = domVideo ? (domVideo.currentSrc || domVideo.src || domVideo.getAttribute('src') || '') : '';
-          const cleanDom = douyinDecode(domSrc);
+          const cleanDom = decodePlatformUrl(domSrc);
           if (/^https?:\/\//i.test(cleanDom) && /douyin|aweme|byteimg|zjcdn|douyinvod|\/video\//i.test(cleanDom)) target = cleanDom;
         } catch (_) {}
       }
@@ -1181,13 +1277,6 @@
   const TIKTOK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
   const TIKTOK_REFERER = 'https://www.tiktok.com/';
 
-  function tiktokDecode(raw) {
-    if (!raw) return '';
-    let text = String(raw);
-    try { text = decodeURIComponent(text); } catch (_) {}
-    return text.replace(/\\u002F/gi, '/').replace(/\\\//g, '/').replace(/\\u0026/gi, '&').replace(/&amp;/g, '&');
-  }
-
   // 收集 TikTok 所有可下载候选；音轨标记为 isAudio，交给 resolveTiktok 做双流合并
   function searchTiktokJson(node, depth, out, seen) {
     if (!node || depth > 16 || typeof node !== 'object' || seen.has(node)) return;
@@ -1201,7 +1290,7 @@
     const music = node.music || node.Music;
     if (music && typeof music === 'object') {
       const addAudio = (raw) => {
-        const url = tiktokDecode(raw);
+        const url = decodePlatformUrl(raw);
         if (/^https?:\/\//i.test(url) && !out.some((c) => c.isAudio && c.url === url)) {
           out.push({ url, isAudio: true });
         }
@@ -1219,16 +1308,16 @@
 
     // bitrateInfo[] 档位：PlayAddr.UrlList 里含同源 play 接口与 CDN 直链
     if (node.PlayAddr && node.CodecType) {
-      const urls = (node.PlayAddr.UrlList || []).map(tiktokDecode).filter((u) => /^https?:\/\//i.test(u));
+      const urls = (node.PlayAddr.UrlList || []).map(decodePlatformUrl).filter((u) => /^https?:\/\//i.test(u));
       const h265 = /h265|hevc|hvc1/i.test(node.CodecType || '');
       for (const url of urls) out.push({ url, codec: node.CodecType, h265 });
     }
     // 主 playAddr（字符串），带 codecType 可判断是否纯视频
     if (typeof node.playAddr === 'string' && /^https?:\/\//i.test(node.playAddr)) {
-      out.push({ url: tiktokDecode(node.playAddr), codec: node.codecType || '', h265: /h265|hevc|hvc1/i.test(node.codecType || '') });
+      out.push({ url: decodePlatformUrl(node.playAddr), codec: node.codecType || '', h265: /h265|hevc|hvc1/i.test(node.codecType || '') });
     }
     if (typeof node.downloadAddr === 'string' && /^https?:\/\//i.test(node.downloadAddr)) {
-      out.push({ url: tiktokDecode(node.downloadAddr), codec: 'download', h265: false });
+      out.push({ url: decodePlatformUrl(node.downloadAddr), codec: 'download', h265: false });
     }
     for (const key in node) {
       const value = node[key];
@@ -1257,14 +1346,14 @@
       for (const re of reList) {
         const hit = re.exec(html || '');
         if (hit && hit[1]) {
-          const decoded = tiktokDecode(hit[1]);
+          const decoded = decodePlatformUrl(hit[1]);
           if (/^https?:\/\//i.test(decoded)) out.push({ url: decoded, codec: hit[2] || '', h265: /h265|hevc|hvc1/i.test(hit[2] || '') });
         }
       }
       const musicRe = /"music"\s*:\s*\{[\s\S]{0,2000}?"playAddr"\s*:\s*"(https?:\\?\/\\?\/[^"]+)"/i;
       const musicHit = musicRe.exec(html || '');
       if (musicHit && musicHit[1]) {
-        const decoded = tiktokDecode(musicHit[1]);
+        const decoded = decodePlatformUrl(musicHit[1]);
         if (/^https?:\/\//i.test(decoded)) out.push({ url: decoded, isAudio: true });
       }
     }
@@ -1308,7 +1397,7 @@
       // 2.1 页面里已经在用的媒体地址：<video>/<audio> 的 currentSrc、已加载资源中的音频请求。
       //     TikTok 网页播放器拿到的地址往往就是带音轨的，比猜 music 接口更可靠。
       const addAudioUrl = (raw) => {
-        const url = tiktokDecode(raw);
+        const url = decodePlatformUrl(raw);
         if (!/^https?:\/\//i.test(url)) return;
         if (audioCandidates.some((c) => c.url === url)) return;
         audioCandidates.push({ url, isAudio: true, from: 'page' });
@@ -1316,7 +1405,7 @@
       try {
         const mediaEls = document.querySelectorAll('video, video source, audio, audio source');
         mediaEls.forEach((el) => {
-          const src = tiktokDecode(el.currentSrc || el.src || el.getAttribute('src') || '');
+          const src = decodePlatformUrl(el.currentSrc || el.src || el.getAttribute('src') || '');
           if (/^https?:\/\//i.test(src) && /(music|audio|mime_type=audio|\.mp3|\.m4a)(\?|#|$)/i.test(src)) addAudioUrl(src);
         });
       } catch (_) {}
@@ -1360,7 +1449,7 @@
         try {
           const domVideo = document.querySelector('video[src], video source[src]');
           const domSrc = domVideo ? (domVideo.currentSrc || domVideo.src || domVideo.getAttribute('src') || '') : '';
-          const cleanDom = tiktokDecode(domSrc);
+          const cleanDom = decodePlatformUrl(domSrc);
           if (/^https?:\/\//i.test(cleanDom) && /tiktokcdn|tiktokv|byteoversea|\/video\/tos\//i.test(cleanDom)) {
             candidates.push({ url: cleanDom, codec: 'dom', h265: false });
           }
@@ -1519,6 +1608,7 @@
     if (/bilibili\.com$/.test(host) || /\.bilibili\.com$/.test(host)) return 'bilibili';
     if (/douyin\.com$/.test(host) || /\.douyin\.com$/.test(host)) return 'douyin';
     if (/tiktok\.com$/.test(host) || /\.tiktok\.com$/.test(host)) return 'tiktok';
+    if (/youtube\.com$/.test(host) || /\.youtube\.com$/.test(host) || /youtu\.be$/.test(host)) return 'youtube';
     return '';
   }
 
@@ -1606,10 +1696,27 @@
     return out;
   }
 
+  // 校验 webRequest 嗅探到的 manifest 是否可用，并标记是否含独立音轨。
+  // 不伪造 streams URL：HLS/DASH 的音视频配对由 downloadHls/downloadDash 在读清单时完成。
+  async function inspectManifestUrl(url, meta) {
+    const kind = detectKind(url);
+    if (kind !== 'hls' && kind !== 'dash') return { ok: false, kind, url };
+    const text = await fetchText(url, null, meta);
+    let hasAudioTrack = false;
+    if (kind === 'hls') {
+      hasAudioTrack = /#EXT-X-MEDIA:[^\r\n]*TYPE=AUDIO/i.test(text);
+    } else {
+      const doc = new DOMParser().parseFromString(text, 'application/xml');
+      if (doc.querySelector('parsererror')) return { ok: false, kind, url, error: 'invalid MPD' };
+      const reps = collectReps(doc);
+      hasAudioTrack = reps.some((r) => r.kind === 'audio');
+    }
+    return { ok: true, kind, url, hasAudioTrack, bytes: text.length };
+  }
+
   window.__viDownloadEngine = {
     detectKind, fetchWhole, downloadHls, downloadDash, verifyBlob,
-    mergeStreams, tsToMp4, isFmp4Head, isTsHead, resolvePlatform,
-    detectPlatform, extractFromPage,
-    resolveBilibiliQualities, referrerMeta, probeTracks
+    mergeStreams, tsToMp4, isTsHead, resolvePlatform, extractFromPage,
+    resolveBilibiliQualities, referrerMeta, probeTracks, inspectManifestUrl
   };
 })();

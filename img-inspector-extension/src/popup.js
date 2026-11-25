@@ -471,6 +471,8 @@ function bindEvents() {
     const results = await mapLimit(chosen, 4, (img) => downloadOne(img, images.indexOf(img)));
     const ok = results.filter((r) => r.ok).length;
     setStatus(`已下载 ${ok}/${chosen.length} 张图片`, ok === chosen.length ? 'success' : 'error');
+    // 下载完成后清空勾选，避免同一批图片被重复下载
+    if (ok > 0) { selected.clear(); render(); }
     setBusy(false);
   });
 

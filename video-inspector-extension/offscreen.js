@@ -41,25 +41,77 @@ function getFFmpeg() {
   if (ffmpegLoading) return ffmpegLoading;
   ffmpegLoading = (async () => {
     const base = chrome.runtime.getURL('lib/ffmpeg/');
-    const { createFFmpeg } = self.FFmpeg;
-    const inst = createFFmpeg({
-      corePath: base + 'ffmpeg-core.js',
-      wasmPath: base + 'ffmpeg-core.wasm',
-      workerPath: base + 'ffmpeg-core.worker.js',
-      mainName: 'main',
-      log: false
-    });
-    inst.setLogger(({ message }) => {
-      logBuffer.push(String(message || ''));
-      if (logBuffer.length > 400) logBuffer.shift();
-    });
-    inst.setProgress((p) => {
-      const ratio = p && typeof p === 'object' ? p.ratio : p;
-      if (currentId != null && typeof ratio === 'number' && !isNaN(ratio)) {
-        send({ type: 'vi-mux-progress', id: currentId, ratio });
+    if (typeof self.createFFmpegCore !== 'function') {
+      throw new Error('createFFmpegCore global unavailable (core script not loaded)');
+    }
+    debug('createFFmpegCore direct, base=' + base);
+    const wasmUrl = base + 'ffmpeg-core.wasm';
+    const core = await self.createFFmpegCore({
+      // ffmpeg 的 main 结束时会调用 exit(0)；保持 runtime 存活，避免 core 被销毁后无法重复执行
+      noExitRuntime: true,
+      // 禁止从 stdin 读取：offscreen 没有 stdin，core 会回退到 window.prompt("Input:") 弹阻塞对话框
+      stdin: () => null,
+      locateFile: (path) => {
+        if (/wasm$/.test(path)) return wasmUrl;
+        return base + path;
+      },
+      print: (msg) => {
+        logBuffer.push(String(msg || ''));
+        if (logBuffer.length > 400) logBuffer.shift();
+      },
+      printErr: (msg) => {
+        logBuffer.push(String(msg || ''));
+        if (logBuffer.length > 400) logBuffer.shift();
       }
     });
-    await inst.load();
+    debug('createFFmpegCore resolved');
+    // 包装成 wrapper 风格的接口。
+    // 直接 core 的 FS 是对象（有 writeFile/readFile/unlink/stat 方法），
+    // 而旧代码用的是 wrapper 风格 FS('writeFile', path, data) 函数，这里做适配。
+    // core.run 是 Emscripten 的 wd()：初始化后再次调用只会命中 ud 已置位的空分支，
+    // 不会执行 ffmpeg main —— 这正是“没有 ffmpeg log、没有输出文件”的原因。
+    // 这里改为直接调用 _main，并按 wd() 内部的方式构造 argc/argv（argv[0] 是程序名）。
+    const rawMain = core._main;
+    if (typeof rawMain !== 'function') throw new Error('ffmpeg core has no _main entry');
+    const fsm = core.FS;
+    const fsShim = function (method) {
+      const args = Array.prototype.slice.call(arguments, 1);
+      if (!fsm || typeof fsm[method] !== 'function') throw new Error('ffmpeg FS.' + method + ' unavailable');
+      return fsm[method].apply(fsm, args);
+    };
+    const inst = {
+      FS: fsShim,
+      run: function () {
+        let args = Array.prototype.slice.call(arguments);
+        if (args.length === 1 && Array.isArray(args[0])) args = args[0];
+        const argv = ['ffmpeg'].concat(args.map(String));
+        const ptrs = argv.map((arg) => {
+          const bytes = core.lengthBytesUTF8(arg) + 1;
+          const ptr = core._malloc(bytes);
+          core.stringToUTF8(arg, ptr, bytes);
+          return ptr;
+        });
+        const argvPtr = core._malloc((ptrs.length + 1) * 4);
+        try {
+          ptrs.forEach((ptr, i) => core.setValue(argvPtr + i * 4, ptr, 'i32'));
+          core.setValue(argvPtr + ptrs.length * 4, 0, 'i32');
+          debug('ffmpeg _main argc=' + ptrs.length);
+          const status = rawMain(ptrs.length, argvPtr);
+          debug('ffmpeg _main returned ' + status);
+          if (status !== 0) {
+            const err = new Error('Program terminated with exit(' + status + ')');
+            err.status = status;
+            throw err;
+          }
+          return status;
+        } finally {
+          ptrs.forEach((ptr) => core._free(ptr));
+          core._free(argvPtr);
+        }
+      },
+      setLogger: () => {},
+      setProgress: () => {}
+    };
     ffmpegInstance = inst;
     return inst;
   })().catch((e) => { ffmpegLoading = null; throw e; });
@@ -108,11 +160,13 @@ async function muxOnce(ff, videoBuf, audioBuf) {
 
   await ff.FS('writeFile', vName, videoBuf);
   await ff.FS('writeFile', aName, audioBuf);
+  debug('files written v=' + vName + ' a=' + aName);
 
   // 音频统一重编码为 AAC：海外常见 Opus/MP3/AC3 用 copy 塞进 MP4 会被直接丢掉。
   // 若 core 未启用 aac 编码器则退回 copy，至少不比旧版更差。
   let aacFailed = false;
   try {
+    debug('ffmpeg run aac start');
     await ff.run(
       '-fflags', '+genpts', '-i', vName,
       '-fflags', '+genpts', '-i', aName,
@@ -122,7 +176,7 @@ async function muxOnce(ff, videoBuf, audioBuf) {
     );
   } catch (e) {
     const msg = String((e && e.message) || e);
-    if (/exit\(0\)|Program terminated with exit/i.test(msg)) {
+    if (/exit\(0\)|Program terminated with exit|^\s*0\s*$/i.test(msg)) {
       exitStatusSeen = true;
     } else {
       aacFailed = true;
@@ -143,7 +197,7 @@ async function muxOnce(ff, videoBuf, audioBuf) {
       );
     } catch (e) {
       const msg = String((e && e.message) || e);
-      if (/exit\(0\)|Program terminated with exit/i.test(msg)) exitStatusSeen = true;
+      if (/exit\(0\)|Program terminated with exit|^\s*0\s*$/i.test(msg)) exitStatusSeen = true;
       else throw new Error('ffmpeg run failed: ' + msg + '\n' + logBuffer.slice(-25).join('\n'));
     }
   }
@@ -166,6 +220,11 @@ async function muxOnce(ff, videoBuf, audioBuf) {
   return data;
 }
 
+function debug(msg) {
+  console.log('[VI-OFFSCREEN]', msg);
+  send({ type: 'vi-mux-progress', id: currentId, ratio: 0, note: String(msg) });
+}
+
 async function doMux(id, videoBuf, audioBuf) {
   const prev = muxLock;
   let release;
@@ -173,26 +232,30 @@ async function doMux(id, videoBuf, audioBuf) {
   await prev;
   currentId = id;
   try {
+    debug('doMux start video=' + videoBuf.length + ' audio=' + audioBuf.length);
     let ff;
     try {
+      debug('loading ffmpeg core');
       ff = await getFFmpeg();
+      debug('ffmpeg core loaded');
     } catch (e) {
       throw new Error('ffmpeg core load failed: ' + String(e && e.message || e));
     }
     let result;
     try {
+      debug('muxOnce start');
       result = await muxOnce(ff, videoBuf, audioBuf);
+      debug('muxOnce done bytes=' + result.length);
     } catch (e) {
-      try { ff.exit(); } catch (_) {}
       ffmpegInstance = null;
       ffmpegLoading = null;
       throw e;
     }
-    if (exitStatusSeen) {
-      try { ff.exit(); } catch (_) {}
-      ffmpegInstance = null;
-      ffmpegLoading = null;
-    }
+    // 每次合并成功后都销毁 core：ffmpeg 的 MEMFS 里残留上一次的 out.mp4，
+    // 复用 core 会让下一次合并读到旧文件（表现为"下载 B 却是 A 的内容"）。
+    // 下次请求会重新 createFFmpegCore，拿到干净的 MEMFS。
+    ffmpegInstance = null;
+    ffmpegLoading = null;
     return result;
   } finally {
     currentId = null;

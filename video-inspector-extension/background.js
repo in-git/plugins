@@ -2,6 +2,50 @@
 
 const MENU_ID = 'video-inspector-open-last';
 
+// ===== webRequest: 按标签页嗅探 HLS/DASH manifest URL =====
+// content script 在 document_idle 才注入，且页面可能用 fetch/XHR 之外的通道加载
+// manifest（原生 video、SW、其它扩展改写过的请求），这里在网络层统一兜底。
+const manifestCache = new Map(); // tabId -> Map<url, { url, kind, ts }>
+const MANIFEST_TTL = 30 * 60 * 1000;
+
+function manifestKind(details) {
+  const url = String(details.url || '');
+  if (/\.m3u8(\?|#|$)/i.test(url)) return 'hls';
+  if (/\.mpd(\?|#|$)/i.test(url)) return 'dash';
+  let type = '';
+  try {
+    const h = (details.responseHeaders || []).find((x) => /^content-type$/i.test(x.name || ''));
+    type = String((h && h.value) || '').toLowerCase();
+  } catch (_) {}
+  if (/mpegurl|m3u8/i.test(type)) return 'hls';
+  if (/dash\+xml/i.test(type)) return 'dash';
+  return '';
+}
+
+function noteManifest(details) {
+  const tabId = details.tabId;
+  if (tabId == null || tabId < 0) return;
+  const kind = manifestKind(details);
+  if (!kind) return;
+  const url = String(details.url || '');
+  let m = manifestCache.get(tabId);
+  if (!m) { m = new Map(); manifestCache.set(tabId, m); }
+  m.set(url, { url, kind, ts: Date.now() });
+  if (m.size > 60) {
+    const oldest = Array.from(m.entries()).sort((a, b) => a[1].ts - b[1].ts)[0];
+    if (oldest) m.delete(oldest[0]);
+  }
+  send(tabId, { type: 'vi-manifest-found', url, kind, frameId: details.frameId }, details.frameId);
+}
+
+try {
+  chrome.webRequest.onResponseStarted.addListener(noteManifest, { urls: ['<all_urls>'] }, ['responseHeaders']);
+} catch (_) {}
+
+if (chrome.tabs && chrome.tabs.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => manifestCache.delete(tabId));
+}
+
 function createMenu() {
   chrome.contextMenus.create({
     id: MENU_ID,
@@ -45,6 +89,16 @@ async function ensureOffscreen() {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+
+  // content 拉取本标签页已嗅探到的 manifest（含注入前发出的请求）
+  if (msg.type === 'vi-get-manifests') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    const m = tabId != null ? manifestCache.get(tabId) : null;
+    const now = Date.now();
+    const items = m ? Array.from(m.values()).filter((x) => now - x.ts < MANIFEST_TTL) : [];
+    sendResponse({ ok: true, items });
+    return;
+  }
 
   // offscreen 就绪信号
   if (msg.type === 'vi-offscreen-ready') return;

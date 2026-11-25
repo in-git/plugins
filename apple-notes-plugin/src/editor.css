@@ -1,0 +1,206 @@
+/* AiEditor → Apple 黑白主题适配（必须在 aieditor/dist/style.css 之后加载） */
+
+html .aieditor,
+html [class*='aieditor'][data-theme='light'] {
+  --aieditor-paper: rgb(var(--canvas));
+  --aieditor-surface: rgb(var(--canvas));
+  --aieditor-ink: rgb(var(--ink));
+  --aieditor-content-ink: rgb(var(--ink));
+  --aieditor-heading-ink: rgb(var(--ink));
+  --aieditor-muted: rgb(var(--subtle));
+  --aieditor-subtle-ink: rgb(var(--subtle));
+  --aieditor-placeholder: rgb(var(--muted));
+  --aieditor-line: rgb(var(--line) / 0.1);
+  --aieditor-control-line: rgb(var(--line) / 0.1);
+  --aieditor-divider-color: rgb(var(--line) / 0.08);
+  --aieditor-hover: rgb(var(--ink) / 0.05);
+  --aieditor-hover-strong: rgb(var(--ink) / 0.08);
+  --aieditor-accent: rgb(var(--ink));
+  --aieditor-accent-soft: rgb(var(--ink) / 0.07);
+  --aieditor-focus-ring: rgb(var(--ink) / 0.14);
+  --aieditor-danger: rgb(var(--danger));
+  --aieditor-danger-soft: rgb(var(--danger) / 0.1);
+  --aieditor-code-bg: rgb(var(--panel));
+  --aieditor-code-ink: rgb(var(--ink));
+  --aieditor-document-color: rgb(var(--ink));
+  --aieditor-document-background-color: transparent;
+  --aieditor-document-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --aieditor-document-font-size: 15px;
+  --aieditor-document-line-height: 1.9;
+  --aieditor-document-paragraph-margin-top: 0.65em;
+  --aieditor-document-paragraph-margin-bottom: 0.65em;
+  --aieditor-document-h1-font-size: 24px;
+  --aieditor-document-h1-font-weight: 600;
+  --aieditor-document-h1-line-height: 1.35;
+  --aieditor-document-h1-margin-top: 32px;
+  --aieditor-document-h1-margin-bottom: 12px;
+  --aieditor-document-h2-font-size: 19px;
+  --aieditor-document-h2-font-weight: 600;
+  --aieditor-document-h2-line-height: 1.4;
+  --aieditor-document-h2-margin-top: 28px;
+  --aieditor-document-h2-margin-bottom: 10px;
+  --aieditor-document-h3-font-size: 16px;
+  --aieditor-document-h3-font-weight: 600;
+  --aieditor-document-h3-line-height: 1.45;
+  --aieditor-document-h3-margin-top: 24px;
+  --aieditor-document-h3-margin-bottom: 8px;
+  --aieditor-document-blockquote-color: rgb(var(--subtle));
+  --aieditor-document-blockquote-border-left: 2px solid rgb(var(--line) / 0.14);
+  --aieditor-document-blockquote-padding: 0 0 0 16px;
+  --aieditor-document-blockquote-font-style: normal;
+  --aieditor-document-link-color: rgb(var(--ink));
+  --aieditor-document-media-block-border-radius: 12px;
+  --aieditor-document-media-inline-border-radius: 6px;
+  --aieditor-document-table-border-color: rgb(var(--line) / 0.12);
+  --aieditor-document-table-header-background: rgb(var(--panel));
+  --aieditor-toolbar-control-size: 28px;
+  --aieditor-toolbar-icon-size: 16px;
+  --aieditor-toolbar-gap: 2px;
+  --aieditor-toolbar-padding: 2px 0;
+  --aieditor-control-radius: 7px;
+}
+
+html[data-theme='dark'] .aieditor,
+html [class*='aieditor'][data-theme='dark'] {
+  --aieditor-paper: rgb(var(--canvas));
+  --aieditor-surface: rgb(var(--canvas));
+  --aieditor-ink: rgb(var(--ink));
+  --aieditor-content-ink: rgb(var(--ink));
+  --aieditor-heading-ink: rgb(var(--ink));
+  --aieditor-muted: rgb(var(--subtle));
+  --aieditor-subtle-ink: rgb(var(--subtle));
+  --aieditor-placeholder: rgb(var(--muted));
+  --aieditor-line: rgb(var(--line) / 0.12);
+  --aieditor-control-line: rgb(var(--line) / 0.12);
+  --aieditor-divider-color: rgb(var(--line) / 0.1);
+  --aieditor-hover: rgb(var(--ink) / 0.07);
+  --aieditor-hover-strong: rgb(var(--ink) / 0.11);
+  --aieditor-accent: rgb(var(--ink));
+  --aieditor-accent-soft: rgb(var(--ink) / 0.1);
+  --aieditor-focus-ring: rgb(var(--ink) / 0.18);
+  --aieditor-danger: rgb(var(--danger));
+  --aieditor-danger-soft: rgb(var(--danger) / 0.14);
+  --aieditor-code-bg: rgb(var(--panel));
+  --aieditor-code-ink: rgb(var(--ink));
+  --aieditor-document-color: rgb(var(--ink));
+  --aieditor-document-background-color: transparent;
+}
+
+html .aieditor {
+  width: 100% !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
+}
+
+html .aieditor__toolbar {
+  border: 0 !important;
+  border-bottom: 1px solid rgb(var(--line) / 0.08) !important;
+  border-radius: 0 !important;
+  background: rgb(var(--canvas) / 0.86) !important;
+  backdrop-filter: blur(16px);
+  padding: 5px 0 !important;
+  margin: 0 0 6px !important;
+  box-shadow: none !important;
+  gap: 3px !important;
+  align-items: center;
+}
+
+/* 工具栏控件回归 Apple 的无边框 hover 风格 */
+html .aieditor__toolbar button,
+html .aieditor__toolbar .aieditor__dropdown-trigger {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 7px !important;
+  border: 0 !important;
+  border-radius: 7px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgb(var(--subtle)) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+html .aieditor__toolbar button:hover,
+html .aieditor__toolbar .aieditor__dropdown-trigger:hover {
+  background: rgb(var(--ink) / 0.05) !important;
+  color: rgb(var(--ink)) !important;
+}
+
+html .aieditor__toolbar button[aria-pressed='true'],
+html .aieditor__toolbar button.is-active,
+html .aieditor__toolbar .aieditor__dropdown-trigger[aria-expanded='true'] {
+  background: rgb(var(--ink) / 0.08) !important;
+  color: rgb(var(--ink)) !important;
+}
+
+html .aieditor__toolbar .aieditor__toolbar-separator,
+html .aieditor__toolbar .aieditor__separator {
+  width: 1px !important;
+  height: 14px !important;
+  margin: 0 4px !important;
+  background: rgb(var(--line) / 0.1) !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+}
+
+html .aieditor__toolbar svg {
+  width: 17px !important;
+  height: 17px !important;
+  stroke-width: 1.5 !important;
+}
+
+html .aieditor__toolbar .aieditor__menu-chevron {
+  width: 13px !important;
+  height: 13px !important;
+}
+
+/* 列表恢复清晰的层级标记 */
+html .aieditor__prose ul:not([data-type='taskList']) {
+  list-style: disc !important;
+}
+
+html .aieditor__prose ol {
+  list-style: decimal !important;
+}
+
+html .aieditor__prose ul:not([data-type='taskList']) li::marker,
+html .aieditor__prose ol li::marker {
+  color: rgb(var(--subtle));
+}
+
+html .aieditor__content {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+html .aieditor__prose {
+  min-height: 46vh;
+  max-width: none !important;
+  padding: 18px 0 96px !important;
+}
+
+html .aieditor__prose img {
+  border-radius: 12px;
+}
+
+html .aieditor__footer,
+html .aieditor__sidebar {
+  display: none !important;
+}
+
+html .aieditor__dropdown-panel,
+html .aieditor__dialog,
+html .aieditor__bubble-menu,
+html .aieditor__table-picker,
+html .aieditor__color-panel,
+html .aieditor__emoji-panel {
+  border-radius: 12px !important;
+  border-color: rgb(var(--line) / 0.08) !important;
+  box-shadow: 0 24px 80px -20px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+}

@@ -781,6 +781,8 @@ globalThis.__IMG_INSPECTOR_UI__ = {
     }
     window.removeEventListener('resize', onResize);
     controller().actions.closePopover();
+    // 关闭面板时清空勾选，下次打开重新选择
+    controller().actions.clearSelection();
   },
   isOpen() {
     return !!state.host && state.host.style.display !== 'none';

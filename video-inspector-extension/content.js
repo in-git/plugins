@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.14.0';
+  const EXT_VERSION = '1.19.23';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -27,13 +27,9 @@
   const SCAN_RESULT = '__video_inspector_scan_result__';
   const MUX_REQUEST = '__video_inspector_mux_request__';
   const MUX_RESPONSE = '__video_inspector_mux_response__';
-  const FFMPEG_WORKER_URL = '__video_inspector_ffmpeg_worker_url__';
-
-  try {
-    document.dispatchEvent(new CustomEvent(FFMPEG_WORKER_URL, {
-      detail: JSON.stringify({ url: chrome.runtime.getURL('ffmpeg-worker.js') })
-    }));
-  } catch (_) {}
+  const MSE_DIRECT_REQUEST = '__video_inspector_mse_direct_request__';
+  const MSE_DIRECT_RESPONSE = '__video_inspector_mse_direct_response__';
+  const MANIFEST_FOUND = '__video_inspector_manifest_found__';
 
   const I18N = {
     "extName": "视频下载工具-吴文龙",
@@ -89,6 +85,7 @@
     "hoverVideoIndex": "video #$index$",
     "download": "下载",
     "downloadAll": "下载全部",
+    "msePreparing": "缓冲中 $sec$ 秒",
     "downloading": "下载中...",
     "downloadDone": "已下载",
     "completed": "已完成",
@@ -1027,12 +1024,66 @@
     });
   } catch (_) {}
 
+  // background webRequest 嗅探到的 manifest：转发到 MAIN world 入库
+  function forwardManifest(items) {
+    (items || []).forEach((item) => {
+      if (!item || !item.url) return;
+      try {
+        document.dispatchEvent(new CustomEvent(MANIFEST_FOUND, {
+          detail: JSON.stringify({ url: item.url, kind: item.kind || '' })
+        }));
+      } catch (_) {}
+    });
+  }
+
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (!msg || msg.type !== 'vi-manifest-found') return;
+      forwardManifest([{ url: msg.url, kind: msg.kind }]);
+    });
+    // 拉取注入前已发出的请求
+    chrome.runtime.sendMessage({ type: 'vi-get-manifests' }, (resp) => {
+      if (resp && resp.ok && Array.isArray(resp.items)) forwardManifest(resp.items);
+    });
+  } catch (_) {}
+
   document.addEventListener(RESOURCES, (event) => {
     let data;
     try { data = JSON.parse(event.detail); } catch (_) { return; }
     if (!data || !Array.isArray(data.items)) return;
     applyCapturedResources(data.items);
+    maybeStartMseCountdown(data.items);
   });
+
+  // 外网视频（YouTube 等）靠 MSE 分片合并下载，分片没攒够时下了也打不开。
+  // 检测到音视频两组分片齐全后，先给下载按钮几秒缓冲倒计时，再放开点击。
+  let mseCountdownTimer = 0;
+  let mseCountdownUntil = 0;
+  let mseCountdownDone = false;
+  const MSE_COUNTDOWN_SEC = 3;
+  function maybeStartMseCountdown(items) {
+    if (!modal || modal.hidden || mseCountdownTimer || mseCountdownDone) return;
+    const hasAudio = items.some((r) => r && r.source === 'mse-audio' && (Number(r.size) || 0) > 1024);
+    const hasVideo = items.some((r) => r && r.source === 'mse-video' && (Number(r.size) || 0) > 1024);
+    if (!hasAudio || !hasVideo) return;
+    mseCountdownUntil = Date.now() + MSE_COUNTDOWN_SEC * 1000;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((mseCountdownUntil - Date.now()) / 1000));
+      if (left <= 0) {
+        clearInterval(mseCountdownTimer);
+        mseCountdownTimer = 0;
+        mseCountdownDone = true;
+        refreshDownloadButtons();
+        return;
+      }
+      shadow.querySelectorAll('[data-action="download"]').forEach((btn) => {
+        btn.disabled = true;
+        btn.textContent = t('msePreparing', { sec: left });
+      });
+    };
+    tick();
+    mseCountdownTimer = setInterval(tick, 1000);
+  }
 
   document.addEventListener(SCAN_RESULT, (event) => {
     let data;
@@ -1106,7 +1157,10 @@
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
-    if (!msg || msg.type !== 'vi-mux-result') return;
+    if (!msg || msg.type !== 'vi-mux-result') {
+      if (msg && msg.type === 'vi-mux-progress' && msg.note) console.log('[VI-MSE-DIAG] offscreen:', msg.note);
+      return;
+    }
     if (!pendingMux.has(msg.id)) return;
     pendingMux.delete(msg.id);
     document.dispatchEvent(new CustomEvent(MUX_RESPONSE, {
@@ -1444,6 +1498,8 @@
     if (!root || !root.isConnected) root = document.body || document.documentElement;
     cache = new WeakMap();
     picked = root;
+    if (mseCountdownTimer) { clearInterval(mseCountdownTimer); mseCountdownTimer = 0; }
+    mseCountdownDone = false;
     modal.hidden = false;
     resetDialogPosition();
     if (numEl) numEl.textContent = '0';
@@ -2167,6 +2223,38 @@
     });
   }
 
+  // 独立 MSE 直连：所有常规候选都失败后，用页面缓存的 MSE 音视频分片合并下载。
+  // 走专用事件通道，完全独立于 REQUEST / resolvePlatform，与 __viMseMuxTest 同源。
+  function requestMseDirectMux(filename, onProgress) {
+    const id = 'msedirect-' + (++downloadSeq);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        document.removeEventListener(MSE_DIRECT_RESPONSE, onResponse, true);
+        resolve(value);
+      };
+      const onResponse = (event) => {
+        let data;
+        try { data = JSON.parse(event.detail); } catch (_) { return; }
+        if (data && data.id === id) finish(data);
+      };
+      document.addEventListener(MSE_DIRECT_RESPONSE, onResponse, true);
+      if (onProgress) onProgress(0, 'merging');
+      timer = setTimeout(() => finish({ ok: false, error: 'MSE 直连合并超时' }), 4 * 60 * 1000);
+      try {
+        document.dispatchEvent(new CustomEvent(MSE_DIRECT_REQUEST, {
+          detail: JSON.stringify({ id, filename })
+        }));
+      } catch (_) {
+        finish({ ok: false, error: 'MSE 直连派发失败' });
+      }
+    });
+  }
+
   // ===== 下载队列：最多 2 个并发，其余排队，批量下载有整体状态 =====
   const MAX_CONCURRENT_DOWNLOADS = 2;
   const downloadQueue = [];
@@ -2231,7 +2319,7 @@
   }
 
   function startDownload(item) {
-    if (!item) return null;
+    if (!item || mseCountdownTimer) return null;
     const key = itemKey(item);
     const prev = downloadTasks.get(key);
     if (prev && (prev.phase === 'downloading' || prev.phase === 'queued')) return prev;
@@ -2453,7 +2541,11 @@
       if (!card) return;
       const button = card.querySelector('[data-action="download"]');
       if (button) {
-        if (task && task.phase === 'downloading') {
+        if (mseCountdownTimer) {
+          const left = Math.max(0, Math.ceil((mseCountdownUntil - Date.now()) / 1000));
+          button.disabled = true;
+          button.textContent = t('msePreparing', { sec: left });
+        } else if (task && task.phase === 'downloading') {
           const phaseKey = task.phaseText === 'merging' ? 'phaseMerging'
             : task.phaseText === 'verifying' ? 'phaseVerifying'
             : task.phaseText === 'resolving' ? 'phaseResolving' : null;
@@ -2603,6 +2695,13 @@
     const errors = [];
     const pageUrl = (task && task.pageUrl) || location.href;
 
+    // 优先触发 __viMseMuxTest()：与控制台命令完全相同的 MSE 合并下载链路。
+    // 没有缓存的 MSE 音视频分片时会快速返回 false，继续走下面的常规候选。
+    if (!task || !task.cancelled) {
+      const mseResult = await requestMseDirectMux(filename, onProgress);
+      if (mseResult && mseResult.ok) return true;
+    }
+
     for (const candidate of candidates) {
       if (task && task.cancelled) return false;
 
@@ -2668,6 +2767,7 @@
     } else if (action === 'queue-close') {
       toggleQueuePanel(false);
     } else if (action === 'download') {
+      if (mseCountdownTimer) return;
       const item = currentItems[index];
       if (item) startDownload(item);
     } else if (action === 'copy-all') {
@@ -2818,65 +2918,8 @@
     return out;
   }
 
-  function isMediaResourceUrl(url) {
-    if (!/^https?:\/\//i.test(url)) return false;
-    const videoRe = /(\.mp4|\.webm|\.m4v|\.ogv|\.mov|\.mkv|\.avi|\.flv|\.m3u8|\.mpd)(\?|#|$)/i;
-    return videoRe.test(url)
-      || /\/video\/|\/videos\/|videoplayback|v\d+-webapp[^/]*\/video\/|bilivideo|upos-sz|upos-hz/i.test(url);
-  }
-
-  function scanVideoResources(existing) {
-    const out = [];
-    const seen = new Set(existing.filter(Boolean));
-    const LIMIT = 300;
-
-    const add = (raw) => {
-      if (out.length >= LIMIT || !raw) return;
-      let url = String(raw).trim().replace(/\\\//g, '/').replace(/\\u002F/gi, '/');
-      if (url.startsWith('//')) url = location.protocol + url;
-      else if (url.startsWith('/')) url = location.origin + url;
-      else if (!/^https?:\/\//i.test(url)) {
-        try { url = new URL(url, location.href).href; } catch (_) { return; }
-      }
-      try { url = new URL(url, location.href).href; } catch (_) { return; }
-      if (seen.has(url) || !isMediaResourceUrl(url)) return;
-      seen.add(url);
-      let name;
-      try { name = decodeURIComponent(url.split('?')[0].split('/').pop()) || '媒体资源'; } catch (_) { name = '媒体资源'; }
-      out.push({ src: url, label: '资源 · ' + name.slice(0, 40) });
-    };
-
-    try {
-      (performance.getEntriesByType('resource') || []).forEach((entry) => add(entry.name));
-    } catch (_) {}
-
-    try {
-      const docs = [document];
-      document.querySelectorAll('iframe').forEach((frame) => {
-        try { if (frame.contentDocument) docs.push(frame.contentDocument); } catch (_) {}
-      });
-      docs.forEach((doc) => {
-        (doc.querySelectorAll('*') || []).forEach((el) => {
-          ['src', 'data-src', 'data-url', 'data-video', 'poster', 'srcset', 'content'].forEach((attr) => {
-            const value = el.getAttribute && el.getAttribute(attr);
-            if (!value) return;
-            if (attr === 'srcset') {
-              value.split(',').forEach((part) => add(part.trim().split(/\s+/)[0]));
-            } else {
-              add(value);
-            }
-          });
-        });
-        (doc.querySelectorAll('script:not([src])') || []).forEach((script) => {
-          const text = script.textContent || '';
-          const matches = text.match(/https?:\\?\/\\?\/[^\s"'<>`]+/g) || [];
-          matches.forEach((match) => add(match.replace(/\\\//g, '/')));
-        });
-      });
-    } catch (_) {}
-
-    return out;
-  }
+ 
+  
 
   function applyCapturedResources(items) {
     if (!Array.isArray(items) || !items.length) return;
@@ -3066,10 +3109,5 @@
     return null;
   }
 
-  function isTyping(node) {
-    if (!node) return false;
-    const tag = (node.tagName || '').toLowerCase();
-    return tag === 'input' || tag === 'textarea' || tag === 'select' ||
-      node.isContentEditable === true || node.getAttribute('contenteditable') === 'true';
-  }
+
 })();

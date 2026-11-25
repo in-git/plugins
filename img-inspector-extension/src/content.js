@@ -368,6 +368,13 @@
     computeLayout();
   }
 
+  // 清空已勾选的图片：下载完成后、关闭面板时调用
+  function clearSelection() {
+    if (!selected.size) return;
+    selected.clear();
+    notify();
+  }
+
   // ==================== 扫描 / 尺寸探测 ====================
 
   function probeOne(url) {
@@ -597,6 +604,7 @@
     if (busy) { setStatus('已有任务进行中，请稍候'); return { ok: 0, fail: 0, error: 'busy' }; }
     if (!list.length) { setStatus('没有可下载的图片', 'error'); return { ok: 0, fail: 0, error: 'empty' }; }
     busy = true;
+    let okCount = 0;
     try {
       if (zip) {
         const built = await buildZip(list);
@@ -606,6 +614,7 @@
           setStatus('打包完成，共 ' + built.ok + ' 张'
             + (built.fail ? '，' + built.fail + ' 张失败（部分站点有防盗链）' : ''),
             built.fail ? 'error' : 'success');
+          okCount = built.ok;
           return { ok: built.ok, fail: built.fail };
         }
         setStatus('没有成功获取到图片，改为逐张下载…');
@@ -621,6 +630,7 @@
         result = { ok: 0, fail: list.length, error: err && err.message ? err.message : String(err) };
       }
 
+      okCount = (result && Number(result.ok)) || 0;
       if (!result) setStatus('下载失败：后台未响应，请在 edge://extensions 重新加载插件', 'error');
       else if (result.error && !result.ok) setStatus('下载失败：' + result.error, 'error');
       else if (result.fail) setStatus('完成：' + result.ok + ' 张成功，' + result.fail + ' 张失败（部分站点有防盗链）', 'error');
@@ -628,6 +638,8 @@
       return result || { ok: 0, fail: list.length, error: 'no-response' };
     } finally {
       busy = false;
+      // 下载完成后清空勾选，避免同一批图片被重复下载
+      if (okCount > 0) clearSelection();
     }
   }
 
@@ -703,6 +715,7 @@
     },
     chipFormat: (v) => toggleIn(cfg.formats, v),
     chipSource: (v) => toggleIn(cfg.sources, v),
+    clearSelection,
     selectAll: () => {
       const all = filtered.length > 0 && filtered.every((img) => selected.has(img.url));
       filtered.forEach((img) => { if (all) selected.delete(img.url); else selected.add(img.url); });
