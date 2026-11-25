@@ -239,7 +239,8 @@
           skipDurationCheck: true
         };
       } catch (e) {
-        console.error('[VI-AUDIO] HLS audio track FAILED -> silent video', e);
+        console.error('[VI-AUDIO] HLS audio track FAILED', e);
+        throw new Error('HLS audio track unavailable: ' + String(e && e.message || e));
       }
     } else {
       console.warn('[VI-AUDIO] HLS: no audio playlist found, relying on muxed video');
@@ -620,11 +621,15 @@
         }
       }
       const count = (re) => (text.match(re) || []).length;
+      const soun = count(/soun/g);
+      const audCodec = count(/mp4a|Opus|ac-3|ec-3|fLaC/g);
+      const vide = count(/vide/g);
+      const vidCodec = count(/avc1|hvc1|hev1|av01|vp09/g);
       return {
-        hasAudio: count(/soun/g) > 0 || count(/mp4a|Opus|ac-3|ec-3/g) > 0,
-        hasVideo: count(/vide/g) > 0 || count(/avc1|hvc1|hev1|av01|vp09/g) > 0,
-        audioTracks: count(/soun/g),
-        videoTracks: count(/vide/g)
+        hasAudio: soun > 0 && audCodec > 0,
+        hasVideo: vide > 0 && vidCodec > 0,
+        audioTracks: soun,
+        videoTracks: vide
       };
     } catch (_) {
       return { hasAudio: false, hasVideo: false, audioTracks: 0, videoTracks: 0 };
@@ -641,12 +646,11 @@
         file.onError = fallback;
         file.onReady = (info) => {
           const tracks = (info && info.tracks) || [];
-          const bin = probeTracksBinary(buffer);
           done({
-            hasAudio: tracks.some((t) => t && (t.codec_type === '2' || t.type === 'audio' || /^mp4a|Opus|ac-3|ec-3|fLaC/i.test(t.codec || ''))) || bin.hasAudio,
-            hasVideo: tracks.some((t) => t && (t.codec_type === '1' || t.type === 'video' || /^avc|hev|hvc|vp0|av01/i.test(t.codec || ''))) || bin.hasVideo,
-            audioTracks: Math.max(tracks.filter((t) => t && t.codec_type === '2').length, bin.audioTracks),
-            videoTracks: Math.max(tracks.filter((t) => t && t.codec_type === '1').length, bin.videoTracks)
+            hasAudio: tracks.some((t) => t && (t.codec_type === '2' || t.type === 'audio' || /^mp4a|Opus|ac-3|ec-3|fLaC/i.test(t.codec || ''))),
+            hasVideo: tracks.some((t) => t && (t.codec_type === '1' || t.type === 'video' || /^avc|hev|hvc|vp0|av01/i.test(t.codec || ''))),
+            audioTracks: tracks.filter((t) => t && t.codec_type === '2').length,
+            videoTracks: tracks.filter((t) => t && t.codec_type === '1').length
           });
         };
         const buf = buffer.slice(0);
@@ -1204,6 +1208,7 @@
       };
       if (typeof music.playAddr === 'string') addAudio(music.playAddr);
       if (typeof music.playUrl === 'string') addAudio(music.playUrl);
+      if (typeof music.downloadUrl === 'string') addAudio(music.downloadUrl);
       if (music.playAddr && typeof music.playAddr === 'object') {
         (music.playAddr.UrlList || music.playAddr.url_list || []).forEach(addAudio);
       }
@@ -1300,6 +1305,56 @@
         audios: audioCandidates.map((c) => String(c.url).slice(0, 120))
       });
 
+      // 2.1 页面里已经在用的媒体地址：<video>/<audio> 的 currentSrc、已加载资源中的音频请求。
+      //     TikTok 网页播放器拿到的地址往往就是带音轨的，比猜 music 接口更可靠。
+      const addAudioUrl = (raw) => {
+        const url = tiktokDecode(raw);
+        if (!/^https?:\/\//i.test(url)) return;
+        if (audioCandidates.some((c) => c.url === url)) return;
+        audioCandidates.push({ url, isAudio: true, from: 'page' });
+      };
+      try {
+        const mediaEls = document.querySelectorAll('video, video source, audio, audio source');
+        mediaEls.forEach((el) => {
+          const src = tiktokDecode(el.currentSrc || el.src || el.getAttribute('src') || '');
+          if (/^https?:\/\//i.test(src) && /(music|audio|mime_type=audio|\.mp3|\.m4a)(\?|#|$)/i.test(src)) addAudioUrl(src);
+        });
+      } catch (_) {}
+      try {
+        const entries = performance.getEntriesByType('resource') || [];
+        for (const entry of entries) {
+          const name = entry && entry.name ? entry.name : '';
+          if (/^https?:\/\//i.test(name) && /(music|audio|mime_type=audio|\.mp3|\.m4a)(\?|#|$)/i.test(name)) addAudioUrl(name);
+        }
+      } catch (_) {}
+
+      // 2.2 页面里没有音轨地址时，再请求 TikTok 官方 item/detail 接口补一次
+      if (!audioCandidates.length) {
+        const idMatch = /\/video\/(\d{10,25})/.exec(page) || /"id"\s*:\s*"(\d{10,25})"/.exec(html || '');
+        if (idMatch) {
+          try {
+            const api = 'https://www.tiktok.com/api/item/detail/?itemId=' + idMatch[1] + '&aid=1988';
+            const res = await fetch(api, withMeta(workMeta, { credentials: 'include' }));
+            const type = res.headers.get('content-type') || '';
+            if (res.ok && /json/i.test(type)) {
+              const extra = [];
+              searchTiktokJson(await res.json(), 0, extra, new WeakSet());
+              for (const c of extra) {
+                if (c.isAudio) addAudioUrl(c.url);
+                else if (!candidates.some((x) => x.url === c.url)) candidates.push(c);
+              }
+              console.log('[VI-AUDIO] tiktok item/detail fallback', {
+                videos: candidates.length,
+                audios: audioCandidates.length,
+                audioSample: (audioCandidates[0] && audioCandidates[0].url || '').slice(0, 120)
+              });
+            }
+          } catch (e) {
+            console.warn('[VI-AUDIO] tiktok item/detail failed', String(e && e.message || e));
+          }
+        }
+      }
+
       // 3. 兜底：页面 DOM / 已加载资源
       if (!candidates.length) {
         try {
@@ -1350,6 +1405,7 @@
       // 4. 逐个验证：优先同源(omit 可过)与 h264；CDN 直链需 include。
       //    h265/hvc1 档实测是纯视频轨，跳过；验证时用 Range 只取一小段，避免整段下载。
       const seen = new Set();
+      let pendingDirect = null;
       for (const cand of candidates) {
         if (!cand.url || seen.has(cand.url)) continue;
         seen.add(cand.url);
@@ -1366,10 +1422,49 @@
           if (/json|text\/html/i.test(type)) continue;
           // 先看候选文件本身是否已带音轨：TikTok 的 playAddr/downloadAddr 有一部分是音视频合一的，
           // 这种情况直接单文件下载，既不用拼“背景音乐”，也不会受音乐 CDN 断连影响。
-          const bin = probeTracksBinary(await probe.arrayBuffer());
-          // 只有音轨没有视频轨的候选（常见于把 music 地址混进候选）不能当视频轨用
+          let bin = probeTracksBinary(await probe.arrayBuffer());
+          // 首包探测不到轨道（moov 在文件尾部）时再抓一段尾部判断，避免把带音轨的文件误判成纯视频
+          if (!bin.hasVideo && !bin.hasAudio) {
+            const range = probe.headers.get('content-range') || '';
+            const total = Number((range.split('/')[1] || probe.headers.get('content-length') || 0));
+            if (total > 262144) {
+              try {
+                const tail = await fetch(cand.url, withMeta(workMeta, {
+                  credentials: cred,
+                  headers: Object.assign({ Range: `bytes=${Math.max(0, total - 262144)}-${total - 1}` }, workMeta.headers || {})
+                }));
+                if (tail.ok || tail.status === 206) bin = probeTracksBinary(await tail.arrayBuffer());
+              } catch (_) {}
+            }
+          }
+          // 视频轨可见但看不到音频轨：moov 里的 stbl 可能超过 192KB，音频轨排在后面。
+          // 再取前 2MB 复查一次，避免把“音视频合一”的文件误判成纯视频（否则会拿音乐去拼，听不到原声）。
+          if (bin.hasVideo && !bin.hasAudio) {
+            const range = probe.headers.get('content-range') || '';
+            const total = Number((range.split('/')[1] || probe.headers.get('content-length') || 0));
+            const wantEnd = Math.min(total || 2097152, 2097152) - 1;
+            if (wantEnd > 196607) {
+              try {
+                const wide = await fetch(cand.url, withMeta(workMeta, {
+                  credentials: cred,
+                  headers: Object.assign({ Range: `bytes=0-${wantEnd}` }, workMeta.headers || {})
+                }));
+                if (wide.ok || wide.status === 206) {
+                  const wideBin = probeTracksBinary(await wide.arrayBuffer());
+                  if (wideBin.hasAudio) bin = wideBin;
+                }
+              } catch (_) {}
+            }
+          }
+          // 只有音轨没有视频轨的候选（常见于把 music 地址混进候选）不能当视频轨用。
+          // 但不能直接丢弃：moov 落在探测窗口之外时会把“合一文件”误判成纯音频，
+          // 先记下来，全部候选都失败时再按单文件下载，避免整条视频被漏掉。
           if (bin.hasAudio && !bin.hasVideo) {
-            console.warn('[VI-AUDIO] tiktok skip audio-only candidate', { codec: cand.codec, url: String(cand.url).slice(0, 120) });
+            console.warn('[VI-AUDIO] tiktok audio-only candidate', { codec: cand.codec, url: String(cand.url).slice(0, 120) });
+            const looksMusic = /(ies-music|mime_type=audio|\.mp3|\.m4a|music\/)/i.test(cand.url);
+            if (!looksMusic && !pendingDirect) {
+              pendingDirect = { videoUrl: cand.url, audioUrl: '', kind: 'direct', headers, userAgent: TIKTOK_UA, credentials: cred };
+            }
             continue;
           }
           if (bin.hasAudio && bin.hasVideo) {
@@ -1406,6 +1501,10 @@
             credentials: cred
           };
         } catch (_) { continue; }
+      }
+      if (pendingDirect) {
+        console.warn('[VI-AUDIO] tiktok fallback: use ambiguous candidate as single file');
+        return pendingDirect;
       }
       return null;
     } catch (_) {

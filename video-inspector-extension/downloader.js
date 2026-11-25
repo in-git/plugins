@@ -16,6 +16,8 @@
   const RESUME_LIST = '__video_inspector_resume_list__';
   const SCAN_RESOURCES = '__video_inspector_scan_resources__';
   const SCAN_RESULT = '__video_inspector_scan_result__';
+  const MUX_REQUEST = '__video_inspector_mux_request__';
+  const MUX_RESPONSE = '__video_inspector_mux_response__';
   const controllers = new Map();
   const jobLocks = new Map();
   const jobControllers = new Map();
@@ -215,6 +217,43 @@
 
   function fire(name, detail) {
     document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(detail) }));
+  }
+
+  // 经 content(隔离世界) -> background -> offscreen 用 ffmpeg 合并。
+  // 成功时 offscreen 已直接触发下载，这里只回传状态；blob 不序列化，用 CustomEvent detail 对象引用传递。
+  function muxViaOffscreen(id, videoBlob, audioBlob, filename) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener(MUX_RESPONSE, onResponse);
+        reject(new Error('offscreen mux timeout'));
+      }, 180000);
+      function onResponse(event) {
+        const data = event.detail;
+        if (!data || data.id !== id) return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        document.removeEventListener(MUX_RESPONSE, onResponse);
+        if (data.ok) resolve({ size: data.size || 0, downloaded: true, hasAudio: data.hasAudio !== false });
+        else reject(new Error(data.error || 'offscreen mux failed'));
+      }
+      document.addEventListener(MUX_RESPONSE, onResponse);
+      document.dispatchEvent(new CustomEvent(MUX_REQUEST, {
+        detail: { id, videoBlob, audioBlob, filename }
+      }));
+    });
+  }
+
+  function detectAudioExt(blob) {
+    const type = String((blob && blob.type) || '').toLowerCase();
+    if (/mpeg|mp3/.test(type)) return 'mp3';
+    if (/ogg|opus/.test(type)) return 'ogg';
+    if (/webm/.test(type)) return 'webm';
+    if (/aac|mp4|m4a/.test(type)) return 'm4a';
+    return 'm4a';
   }
 
   function saveHref(href, filename) {
@@ -809,16 +848,23 @@
       const dlArg = dlMeta
         ? { __viMeta: dlMeta, __viHeaders: payload.headers || null }
         : payload.headers;
-      // 音频轨：优先带 Range 拉取（解析阶段探测已验证 Range 可用），失败再退回普通请求
-      const audioHeaders = payload.headers || null;
+      // 音频轨必须用与视频相同的 UA/Referer/Cookie，否则 CDN 返回 403 错误页会被当成音频保存
       const fetchAudioTrack = async (audioUrl) => {
         const rangedMeta = Object.assign({}, dlMeta || {}, { forceRange: true });
+        let r;
         try {
-          return await engine.fetchWhole(audioUrl, controller.signal, onProgress, audioHeaders, rangedMeta);
+          r = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg, rangedMeta);
         } catch (e) {
           console.warn('[VI-AUDIO] audio ranged fetch failed, retry plain', String(e && e.message || e));
-          return await engine.fetchWhole(audioUrl, controller.signal, onProgress, audioHeaders, dlMeta || undefined);
+          r = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg, dlMeta || undefined);
         }
+        const blob = r && r.tracks && r.tracks[0];
+        const type = String((blob && blob.type) || (r && r.contentType) || '').toLowerCase();
+        if (!blob || blob.size < 1024 || /html|json|javascript|xml|text\//.test(type)) {
+          throw new Error('audio track is not media: type=' + type + ' bytes=' + ((blob && blob.size) || 0));
+        }
+        console.log('[VI-AUDIO] audio fetched', { bytes: blob.size, type });
+        return r;
       };
 
       // ===== 主轨断点续传：分块写入 IndexedDB，中断后可从已下载位置继续 =====
@@ -1014,6 +1060,8 @@
       let tracks = result.tracks || [result.blob];
       let finalBlob;
       let finalExt = result.ext || 'mp4';
+      let separateSaved = false;
+      let offscreenDone = false;
       console.log('[VI-AUDIO] result', { kind, trackCount: tracks.length, ext: finalExt, sizes: tracks.map((t) => t && t.size || 0) });
 
       if (tracks.length > 1) {
@@ -1054,16 +1102,54 @@
           finalBlob = tracks[0];
           finalExt = result.ext || 'mp4';
         } else {
-          finalBlob = await engine.mergeStreams(buffers);
-          finalExt = 'mp4';
-          // P0.5：合并结果必须真的带音轨，绝不再静默产出静音文件
-          if (typeof engine.probeTracks === 'function') {
-            const mergedProbe = await engine.probeTracks(await finalBlob.arrayBuffer());
-            console.log('[VI-AUDIO] merge ok', mergedProbe, 'bytes', finalBlob.size);
-            if (!mergedProbe.hasAudio) throw new Error('merge produced no audio track');
-          } else {
-            console.log('[VI-AUDIO] merge ok, bytes', finalBlob.size);
+          try {
+            const muxBase = String(filename || 'video').replace(/\.[^.]+$/, '') + '.mp4';
+            console.log('[VI-AUDIO] trying offscreen ffmpeg mux');
+            const muxHeartbeat = setInterval(() => {
+              fire(PROGRESS, { id, loaded: 0, total: 100, percent: 0, phase: 'merging' });
+            }, 15000);
+            let muxResult;
+            try {
+              const vb = new Blob([buffers[0]], { type: (tracks[0] && tracks[0].type) || 'video/mp4' });
+              const ab = new Blob([buffers[1]], { type: (tracks[1] && tracks[1].type) || 'audio/mp4' });
+              muxResult = await muxViaOffscreen(id, vb, ab, muxBase);
+            } finally {
+              clearInterval(muxHeartbeat);
+            }
+            offscreenDone = !!muxResult.downloaded && muxResult.hasAudio !== false;
+            if (!offscreenDone) throw new Error('offscreen mux result has no audio');
+            console.log('[VI-AUDIO] offscreen mux ok, bytes', muxResult.size);
+          } catch (muxError) {
+            console.warn('[VI-AUDIO] offscreen mux failed, fallback to MP4Box', muxError);
           }
+
+          if (!offscreenDone) {
+            try {
+              finalBlob = await engine.mergeStreams(buffers);
+              finalExt = 'mp4';
+              if (typeof engine.probeTracks === 'function') {
+                const mergedProbe = await engine.probeTracks(await finalBlob.arrayBuffer());
+                console.log('[VI-AUDIO] MP4Box merge ok', mergedProbe, 'bytes', finalBlob.size);
+                if (!mergedProbe.hasAudio) throw new Error('merge produced no audio track');
+              }
+            } catch (mergeError) {
+              console.error('[VI-AUDIO] all merge failed -> save tracks separately', mergeError);
+              const base = String(filename || 'video').replace(/\.[^.]+$/, '');
+              const videoExt = (result.ext === 'webm' || (tracks[0] && tracks[0].type === 'video/webm')) ? 'webm' : 'mp4';
+              saveHref(URL.createObjectURL(tracks[0]), base + '.video.' + videoExt);
+              saveHref(URL.createObjectURL(tracks[1]), base + '.audio.' + detectAudioExt(tracks[1] && tracks[1].type));
+              separateSaved = true;
+              finalBlob = tracks[0];
+              finalExt = videoExt;
+            }
+          }
+        }
+        // offscreen 已直接下载成品：跳过后续校验与保存，只回传成功
+        if (offscreenDone) {
+          objectUrl = '';
+          fire(RESPONSE, { id, ok: true, method: kind + '+ffmpeg', size: tracks[0].size + tracks[1].size, separateTracks: false });
+          fire(PROGRESS, { id, loaded: 100, total: 100, percent: 100, phase: 'verifying' });
+          return;
         }
       } else {
         finalBlob = tracks[0];
@@ -1083,23 +1169,16 @@
       // 最终校验：probeTracks 的 audioTracks 取 MP4Box 解析值与二进制 soun 计数的最大值，
       // fMP4 中 soun 常被重复扫描到，>1 多为误判。只有原始视频轨本身带音轨时多轨才是真异常；
       // 否则回退会把已经合并进去的音频丢掉，导致下载的视频没声音。
-      if (typeof engine.probeTracks === 'function' && tracks.length > 1) {
+      if (typeof engine.probeTracks === 'function' && tracks.length > 1 && !separateSaved) {
         try {
           const probe = await engine.probeTracks(await finalBlob.arrayBuffer());
           console.log('[VI-AUDIO] final probe', probe, 'size', finalBlob.size);
           // 合并结果必须同时有视频轨，否则就是“有声无画”，宁可报错也不落盘
           if (!probe.hasVideo) throw new Error('merge produced no video track');
           if (probe.audioTracks > 1) {
-            let sourceHasAudio = false;
-            try {
-              const sourceProbe = await engine.probeTracks(await tracks[0].arrayBuffer());
-              sourceHasAudio = !!(sourceProbe && sourceProbe.hasAudio);
-            } catch (_) {}
-            console.warn('[VI-AUDIO] multi-audio, sourceHasAudio=', sourceHasAudio);
-            if (sourceHasAudio) {
-              finalBlob = tracks[0];
-              finalExt = result.ext || 'mp4';
-            }
+            // 合并后的 fMP4 里 soun 常被重复扫描到，这里只记录，不再回退成源视频——
+            // 回退会丢掉刚合并进去的音轨，正是“下载下来没声音”的来源之一。
+            console.warn('[VI-AUDIO] multi-audio detected, keep merged output', probe);
           }
         } catch (e) {
           if (/no (audio|video) track|merge produced/i.test(String(e && e.message))) throw e;
@@ -1113,16 +1192,41 @@
       const check = await engine.verifyBlob(finalBlob, checkDuration, expectedSize);
       if (!check.ok) throw new Error(check.error);
 
-      objectUrl = URL.createObjectURL(finalBlob);
-      const baseName = String(filename || 'video').replace(/\.[^.]+$/, '');
-      saveHref(objectUrl, baseName + '.' + finalExt);
+      if (!separateSaved) {
+        objectUrl = URL.createObjectURL(finalBlob);
+        const baseName = String(filename || 'video').replace(/\.[^.]+$/, '');
+        saveHref(objectUrl, baseName + '.' + finalExt);
+      }
       // 成功落盘后清理断点数据
       if (jobId) await jobDelete(jobId);
-      fire(RESPONSE, { id, ok: true, method: kind, size: finalBlob.size, duration: result.duration, validated: true });
+      fire(RESPONSE, {
+        id,
+        ok: true,
+        method: kind,
+        size: finalBlob.size,
+        duration: result.duration,
+        validated: true,
+        separateTracks: separateSaved,
+        // 把实际下载的地址回传，重试时优先复用同一个视频，避免按当前页面重新解析串到别的视频
+        sourceUrl: url,
+        sourceVideoUrl: payload.videoUrl || '',
+        sourceAudioUrl: payload.audioUrl || '',
+        sourceKind: kind
+      });
     })().catch((error) => {
       const message = String((error && error.message) || error);
       const cancelled = controller.signal.aborted || /abort|cancel/i.test(message);
-      fire(RESPONSE, { id, ok: false, error: cancelled ? 'cancelled' : message, validated: false });
+      fire(RESPONSE, {
+        id,
+        ok: false,
+        error: cancelled ? 'cancelled' : message,
+        validated: false,
+        // 失败也回传已解析的地址，重试时可从同一个视频继续，而不是按页面重新解析
+        sourceUrl: cancelled ? '' : (url || ''),
+        sourceVideoUrl: cancelled ? '' : (payload.videoUrl || ''),
+        sourceAudioUrl: cancelled ? '' : (payload.audioUrl || ''),
+        sourceKind: cancelled ? '' : kind
+      });
     }).finally(() => {
       controllers.delete(id);
       if (releaseJobLock) {

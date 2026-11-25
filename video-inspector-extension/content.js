@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.11.0';
+  const EXT_VERSION = '1.14.0';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -25,6 +25,8 @@
   const QUALITIES = '__video_inspector_qualities__';
   const SCAN_RESOURCES = '__video_inspector_scan_resources__';
   const SCAN_RESULT = '__video_inspector_scan_result__';
+  const MUX_REQUEST = '__video_inspector_mux_request__';
+  const MUX_RESPONSE = '__video_inspector_mux_response__';
   const FFMPEG_WORKER_URL = '__video_inspector_ffmpeg_worker_url__';
 
   try {
@@ -43,7 +45,8 @@
     "badgeArea": "框选模式：按住鼠标左键拖拽框选视频区域 · Esc 退出",
     "areaFound": "框选区域内发现 $count$ 个视频",
     "areaEmpty": "框选区域内没有视频，请重新框选",
-    "shortcutHint": "快捷键 Alt+S：像审查元素一样移动高亮、单击选择视频区域 · Esc 退出",
+    "shortcutHint": "快捷键：Alt+S，快速选择视频",
+    "separateTracks": "音视频合并失败，已分别保存视频和音频两个文件，请本地用播放器加载音频。",
     "inspectEmpty": "这里没有找到视频，换个位置再点一次",
     "badgeFound": "已探查到 $count$ 个视频",
     "badgeActiveShort": "探查中",
@@ -97,6 +100,7 @@
     "queueTitle": "下载队列",
     "queueEmpty": "当前没有下载任务",
     "queueItemFallback": "视频",
+    "cancelDownload": "取消",
     "pauseAll": "暂停全部",
     "retryFailed": "重试失败",
     "clearDone": "清理已完成",
@@ -345,51 +349,52 @@
     background: #fff;
     border-bottom: 1px solid #f5f5f7;
   }
-  /* 下载队列：右下角悬浮按钮 + 点击展开任务面板 */
+  /* 下载队列：模态框底部按钮 + 点击展开任务面板 */
   .vi-queue-fab {
-    position: fixed;
+    position: absolute;
     right: 24px;
-    bottom: 24px;
-    z-index: 2147483647;
+    bottom: 12px;
+    z-index: 7;
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    height: 44px;
-    padding: 0 16px;
-    border: none;
-    border-radius: 22px;
-    background: #1d1d1f;
-    color: #fff;
-    font-size: 13px;
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid #e3e5ea;
+    border-radius: 14px;
+    background: #fff;
+    color: #1d1d1f;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, .22);
-    transition: transform .15s, box-shadow .15s;
+    transition: background .15s, border-color .15s, color .15s;
   }
   .vi-queue-fab[hidden] { display: none; }
-  .vi-queue-fab:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
-  .vi-queue-fab.active { background: #007aff; }
-  .vi-queue-fab-icon { font-size: 15px; line-height: 1; }
+  .vi-queue-fab:hover { border-color: #c9ccd3; }
+  .vi-queue-fab.active { background: #f2f7ff; border-color: #b9d6ff; color: #007aff; }
+  .vi-queue-fab-icon { font-size: 13px; line-height: 1; }
   .vi-queue-fab-count {
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, .22);
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: #f0f1f4;
+    color: #6e6e73;
     font-size: 11px;
     font-weight: 600;
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
+  .vi-queue-fab.active .vi-queue-fab-count { background: #007aff; color: #fff; }
   .vi-queue-panel {
-    position: fixed;
+    position: absolute;
     right: 24px;
-    bottom: 80px;
-    z-index: 2147483647;
+    bottom: 64px;
+    z-index: 8;
     width: 340px;
-    max-width: calc(100vw - 48px);
-    max-height: 62vh;
+    max-width: calc(100% - 48px);
+    max-height: 52vh;
     display: flex;
     flex-direction: column;
     border-radius: 14px;
@@ -434,6 +439,20 @@
   .vi-queue-state.is-done { color: #1a9c52; }
   .vi-queue-state.is-failed { color: #d70015; }
   .vi-queue-state.is-active { color: #007aff; }
+  .vi-queue-cancel {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: #86868b;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .vi-queue-cancel:hover { background: #f0f1f4; color: #d70015; }
   .vi-queue-item-bar { margin-top: 6px; height: 4px; border-radius: 2px; background: #eef0f3; overflow: hidden; }
   .vi-queue-item-bar i { display: block; height: 100%; width: 0; background: #007aff; transition: width .25s; }
   .vi-queue-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #f0f1f4; }
@@ -821,32 +840,32 @@
 
     <footer class="vi-footer">
       <span class="vi-shortcut-hint">${t('shortcutHint')}</span>
+      <button class="vi-queue-fab" type="button" data-action="queue-toggle" hidden aria-label="${t('queueTitle')}">
+        <span class="vi-queue-fab-icon">↓</span>
+        <span>${t('queueTitle')}</span>
+        <span class="vi-queue-fab-count">0</span>
+      </button>
       <button class="vi-btn feedback" type="button" data-action="feedback" title="可在B站私信反馈问题：${FEEDBACK_URL}">
         <svg class="vi-feedback-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v10h16V6H4z"/></svg>
         <span>${t('feedback')}</span>
       </button>
     </footer>
 
-  </div>
-</div>
+    <div class="vi-queue-panel" hidden>
+      <div class="vi-queue-head">
+        <strong>${t('queueTitle')}</strong>
+        <span class="vi-queue-stats"></span>
+        <button class="vi-queue-close" type="button" data-action="queue-close" aria-label="${t('close')}">×</button>
+      </div>
+      <div class="vi-queue-progress"><span class="vi-queue-fill"></span></div>
+      <div class="vi-queue-list"></div>
+      <div class="vi-queue-actions">
+        <button class="vi-btn" type="button" data-action="dl-pause">${t('pauseAll')}</button>
+        <button class="vi-btn" type="button" data-action="dl-retry">${t('retryFailed')}</button>
+        <button class="vi-btn" type="button" data-action="dl-clear">${t('clearDone')}</button>
+      </div>
+    </div>
 
-<button class="vi-queue-fab" type="button" data-action="queue-toggle" hidden aria-label="${t('queueTitle')}">
-  <span class="vi-queue-fab-icon">↓</span>
-  <span>${t('queueTitle')}</span>
-  <span class="vi-queue-fab-count">0</span>
-</button>
-<div class="vi-queue-panel" hidden>
-  <div class="vi-queue-head">
-    <strong>${t('queueTitle')}</strong>
-    <span class="vi-queue-stats"></span>
-    <button class="vi-queue-close" type="button" data-action="queue-close" aria-label="${t('close')}">×</button>
-  </div>
-  <div class="vi-queue-progress"><span class="vi-queue-fill"></span></div>
-  <div class="vi-queue-list"></div>
-  <div class="vi-queue-actions">
-    <button class="vi-btn" type="button" data-action="dl-pause">${t('pauseAll')}</button>
-    <button class="vi-btn" type="button" data-action="dl-retry">${t('retryFailed')}</button>
-    <button class="vi-btn" type="button" data-action="dl-clear">${t('clearDone')}</button>
   </div>
 </div>
 `;
@@ -1022,6 +1041,77 @@
     if (!integratingScanId || data.id !== integratingScanId) return;
     integratingScanId = '';
     integrateResources(data.items);
+  });
+
+  // ===== ffmpeg offscreen mux bridge (MAIN world -> isolated -> background -> offscreen) =====
+  const CHUNK_BYTES = 512 * 1024;
+  const pendingMux = new Set();
+
+  function blobToChunks(blob, id, stream) {
+    return new Promise((resolve, reject) => {
+      const reader = blob.stream().getReader();
+      let index = 0;
+      const pump = () => reader.read().then(({ done, value }) => {
+        if (done) { resolve(); return; }
+        let offset = 0;
+        const sendChunk = () => {
+          if (offset >= value.length) { pump(); return; }
+          const slice = value.subarray(offset, offset + CHUNK_BYTES);
+          offset += slice.length;
+          let binary = '';
+          for (let i = 0; i < slice.length; i += 8192) {
+            binary += String.fromCharCode.apply(null, slice.subarray(i, i + 8192));
+          }
+          const b64 = btoa(binary);
+          chrome.runtime.sendMessage({ type: 'vi-mux-chunk', id, stream, index: index++, b64 }, () => {
+            if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+            sendChunk();
+          });
+        };
+        sendChunk();
+      }).catch(reject);
+      pump();
+    });
+  }
+
+  document.addEventListener(MUX_REQUEST, async (event) => {
+    const data = event.detail;
+    if (!data || !data.id) return;
+    const { id, videoBlob, audioBlob, filename } = data;
+    if (!videoBlob || !audioBlob) {
+      document.dispatchEvent(new CustomEvent(MUX_RESPONSE, { detail: { id, ok: false, error: 'missing tracks' } }));
+      return;
+    }
+    if (pendingMux.has(id)) return;
+    pendingMux.add(id);
+    try {
+      await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: 'vi-mux-init', id, filename: filename || 'video.mp4' }, () => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve();
+        });
+      });
+      await blobToChunks(videoBlob, id, 'video');
+      await blobToChunks(audioBlob, id, 'audio');
+      await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: 'vi-mux-go', id }, () => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve();
+        });
+      });
+    } catch (e) {
+      pendingMux.delete(id);
+      document.dispatchEvent(new CustomEvent(MUX_RESPONSE, { detail: { id, ok: false, error: String(e && e.message || e) } }));
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== 'vi-mux-result') return;
+    if (!pendingMux.has(msg.id)) return;
+    pendingMux.delete(msg.id);
+    document.dispatchEvent(new CustomEvent(MUX_RESPONSE, {
+      detail: { id: msg.id, ok: !!msg.ok, size: msg.size || 0, error: msg.error || '', hasAudio: msg.hasAudio }
+    }));
   });
 
   function openAllVideos() {
@@ -2100,6 +2190,10 @@
   function runTask(task) {
     if (!task || task.cancelled) return;
     task.phase = 'downloading';
+    // 首次执行时冻结“已捕获资源”快照，重试沿用同一份，避免串到别的视频
+    if (!task.capturedSnapshot) {
+      task.capturedSnapshot = capturedResources ? Array.from(capturedResources.values()) : [];
+    }
     refreshDownloadButtons();
     downloadItem(task.item, (percent, phase, data) => {
       if (typeof percent === 'number') task.percent = percent;
@@ -2110,6 +2204,7 @@
       if (phase && task.phaseText !== phase) task.phaseText = phase;
       scheduleRefresh();
     }, task).then((ok) => {
+      if (task.removed) return;
       task.phase = ok ? 'done' : (task.cancelled ? 'paused' : 'failed');
       task.phaseText = '';
       if (task.phase === 'done') {
@@ -2119,6 +2214,7 @@
       refreshDownloadButtons();
       pumpQueue();
     }).catch(() => {
+      if (task.removed) return;
       task.phase = 'failed';
       task.phaseText = '';
       refreshDownloadButtons();
@@ -2152,7 +2248,14 @@
       lastError: '',
       percent: startPercent,
       loaded: (prev && prev.phase === 'paused' && prev.loaded) || (job ? job.size || 0 : 0),
-      total: (prev && prev.phase === 'paused' && prev.total) || 0
+      total: (prev && prev.phase === 'paused' && prev.total) || 0,
+      // 记录发起时的页面地址与已解析成功的源，重试时优先复用，避免解析到页面当前播放的另一个视频
+      pageUrl: (prev && prev.pageUrl) || location.href,
+      sourceUrl: (prev && prev.sourceUrl) || '',
+      sourceVideoUrl: (prev && prev.sourceVideoUrl) || '',
+      sourceAudioUrl: (prev && prev.sourceAudioUrl) || '',
+      sourceKind: (prev && prev.sourceKind) || '',
+      capturedSnapshot: (prev && prev.capturedSnapshot) || null
     };
     downloadTasks.set(key, task);
     downloadQueue.push(task);
@@ -2174,6 +2277,24 @@
         task.phase = 'paused';
       }
     });
+    pumpQueue();
+    refreshDownloadButtons();
+  }
+
+  // 单个任务取消：中断网络请求、从队列与列表中移除
+  function cancelTask(task) {
+    if (!task || task.removed) return;
+    task.removed = true;
+    task.cancelled = true;
+    if (task.id) {
+      try { document.dispatchEvent(new CustomEvent(DL_CANCEL, { detail: JSON.stringify({ id: task.id }) })); } catch (_) {}
+    }
+    const qi = downloadQueue.indexOf(task);
+    if (qi >= 0) downloadQueue.splice(qi, 1);
+    downloadTasks.forEach((value, key) => {
+      if (value === task) downloadTasks.delete(key);
+    });
+    resumeJobs.delete(resumeKeyOf(task.item));
     pumpQueue();
     refreshDownloadButtons();
   }
@@ -2240,6 +2361,19 @@
       state.className = 'vi-queue-state ' + stateClass;
       state.textContent = taskStatusText(task);
       top.append(name, state);
+      if (task.phase !== 'done') {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'vi-queue-cancel';
+        cancel.title = t('cancelDownload');
+        cancel.setAttribute('aria-label', t('cancelDownload'));
+        cancel.textContent = '×';
+        cancel.addEventListener('click', (event) => {
+          event.stopPropagation();
+          cancelTask(task);
+        });
+        top.append(cancel);
+      }
       row.append(top);
       if (task.phase === 'downloading' || task.phase === 'paused') {
         const bar = document.createElement('div');
@@ -2388,7 +2522,7 @@
     });
   }
 
-  function buildCandidates(item) {
+  function buildCandidates(item, task) {
     const candidates = [];
     const seen = new Set();
     const add = (candidate) => {
@@ -2398,6 +2532,19 @@
       seen.add(key);
       candidates.push(candidate);
     };
+
+    // 0. 重试时优先复用上次真正下载成功的那个地址，保证还是同一个视频；
+    //    地址过期（403/404）时再走后面的重新解析。
+    if (task && task.sourceUrl) {
+      add({
+        url: task.sourceUrl,
+        videoUrl: task.sourceVideoUrl || '',
+        audioUrl: task.sourceAudioUrl || '',
+        kind: task.sourceKind || ''
+      });
+    }
+
+    const fallbackPageUrl = (task && task.pageUrl) || location.href;
 
     if (item && item.discovered) {
       // 发现的资源：按其自身类型下载，不用当前页面 URL 做平台解析（会串台）。
@@ -2416,10 +2563,12 @@
     }
 
     // 0. 平台解析（B站/抖音主动调接口），最高优先级。
-    add({ kind: 'platform', url: (item && item.src) || location.href });
+    add({ kind: 'platform', url: (item && item.src) || fallbackPageUrl });
 
     // 1. B站/通用 DASH 双流（playurl 解析）——完整音视频，优先下载。
-    (capturedResources ? Array.from(capturedResources.values()) : []).forEach((res) => {
+    //    重试时用任务创建时的快照，避免把页面后来新捕获的、属于别的视频的流拿过来。
+    const capturedList = (task && task.capturedSnapshot) || (capturedResources ? Array.from(capturedResources.values()) : []);
+    capturedList.forEach((res) => {
       if (!res) return;
       if (res.kind === 'streams' && res.videoUrl) {
         add({ kind: 'streams', url: res.url, videoUrl: res.videoUrl, audioUrl: res.audioUrl || '' });
@@ -2427,7 +2576,7 @@
     });
 
     // 2. 嗅探到的 m3u8/mpd 清单。
-    (capturedResources ? Array.from(capturedResources.values()) : []).forEach((res) => {
+    capturedList.forEach((res) => {
       if (!res || !res.url) return;
       if (/\.m3u8(\?|#|$)/i.test(res.url)) add({ kind: 'hls', url: res.url });
       else if (/\.mpd(\?|#|$)/i.test(res.url)) add({ kind: 'dash', url: res.url });
@@ -2450,8 +2599,9 @@
     const filename = fileName(item);
     const video = item.el;
     const duration = video && Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
-    const candidates = buildCandidates(item);
+    const candidates = buildCandidates(item, task);
     const errors = [];
+    const pageUrl = (task && task.pageUrl) || location.href;
 
     for (const candidate of candidates) {
       if (task && task.cancelled) return false;
@@ -2465,13 +2615,20 @@
           kind: candidate.kind || '',
           videoUrl: candidate.videoUrl || '',
           audioUrl: candidate.audioUrl || '',
-          pageUrl: candidate.pageUrl || location.href,
+          pageUrl: candidate.pageUrl || pageUrl,
           jobKey: jobKeyOf(item)
         });
       }
       if (task && task.cancelled) return false;
+      if (task && result && result.sourceUrl) {
+        task.sourceUrl = result.sourceUrl;
+        task.sourceVideoUrl = result.sourceVideoUrl || '';
+        task.sourceAudioUrl = result.sourceAudioUrl || '';
+        task.sourceKind = result.sourceKind || '';
+      }
       if (result && result.ok) {
         if (result.size) applyDownloadedSize(item, result.size);
+        if (result.separateTracks) showAreaToast(t('separateTracks'));
         return true;
       }
       if (result && result.error && result.error) errors.push(result.error);

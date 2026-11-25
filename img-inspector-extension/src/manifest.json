@@ -1,22 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "图片探查器 - 批量下载网页图片",
-  "version": "1.0.9",
+  "name": "图片下载器-吴文龙",
+  "version": "1.0.40",
   "description": "扫描当前网页中的所有图片，支持瀑布流预览、尺寸筛选、多选与一键打包下载。",
-  "permissions": ["activeTab", "scripting", "downloads"],
+  "permissions": ["activeTab", "scripting", "downloads", "storage", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
+  "declarative_net_request": {
+    "rule_resources": [
+      { "id": "hotlink", "enabled": true, "path": "rules.json" }
+    ]
+  },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["tailwind-css.js", "content.js"],
+      "js": ["tailwind-css.js", "zip.js", "ui.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "图片探查器",
+    "default_title": "图片下载器-吴文龙",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
