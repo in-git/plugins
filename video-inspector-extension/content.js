@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.9.0';
+  const EXT_VERSION = '1.10.5';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -45,6 +45,13 @@
     "countUnit": "个视频",
     "copyAll": "复制全部地址",
     "refresh": "扫描",
+    "search": "搜索",
+    "searchMode": "搜索方式",
+    "normalSearch": "普通搜索",
+    "deepScan": "深度扫描",
+    "deepScanning": "深度扫描中...",
+    "deepView": "深度视图 · 发现的资源",
+    "deepEmpty": "没有发现可下载的资源，试试普通搜索。",
     "quality": "画质",
     "qualityAuto": "自动（最高）",
     "qualityLoading": "解析中...",
@@ -62,6 +69,7 @@
     "metaDuration": "时长",
     "metaResolution": "尺寸",
     "metaSize": "大小",
+    "source": "来源",
     "durationNone": "-",
     "emptyTitle": "该元素下没有发现视频",
     "emptyDesc": "<video> 元素、Shadow DOM 与同源 iframe 都会被扫描。",
@@ -103,7 +111,7 @@
   let mouse = { x: 0, y: 0 };
   let hovered = null;
   let picked = null;
-  let deepMode = false;
+  let scanMode = 'normal';
   let deepScanTimer = 0;
   let capturePollTimer = 0;
   let currentItems = [];
@@ -112,6 +120,7 @@
   let sizeSeq = 0;
   let scanSeq = 0;
   let integratingScanId = '';
+  let scanLoading = false;
   function itemKey(item) {
     return String(item && item.index) + ':' + ((item && item.src) || 'no-src');
   }
@@ -213,7 +222,11 @@
     padding: 32px 40px 26px;
     background: #fff;
     border-bottom: 1px solid #f5f5f7;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
   }
+  .vi-head.dragging { cursor: grabbing; }
   .vi-title-wrap { flex: 1; min-width: 0; }
   .vi-kicker {
     margin-bottom: 9px;
@@ -265,7 +278,44 @@
     background: #fff;
     border-bottom: 1px solid #f5f5f7;
   }
-  .vi-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+  .vi-search-group, .vi-download-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .vi-download-group { margin-left: auto; }
+  .vi-scan-mode {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 9px;
+    background: #f6f6f7;
+  }
+  .vi-scan-mode label {
+    position: relative;
+    display: inline-flex;
+    border-radius: 7px;
+    font-size: 12px;
+    color: #86868b;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .vi-scan-mode input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .vi-scan-mode span { padding: 6px 12px; border-radius: 7px; }
+  .vi-scan-mode input:checked + span {
+    background: #fff;
+    color: #007aff;
+    font-weight: 500;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+  }
+  .vi-mode-note {
+    height: 30px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(0, 122, 255, .1);
+    color: #007aff;
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+  }
   .vi-btn {
     height: 34px;
     padding: 0 16px;
@@ -331,6 +381,63 @@
     transition: transform .22s, box-shadow .22s;
   }
   .vi-card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0, 0, 0, .07); }
+
+  /* 深度扫描列表视图：单列、无封面、信息完整度优先 */
+  .vi-grid.vi-list-mode { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .vi-list-header,
+  .vi-list-row {
+    display: grid;
+    grid-template-columns: 18px 40px minmax(160px, 1fr) 88px 112px 96px 92px 88px;
+    align-items: center;
+    gap: 12px;
+  }
+  .vi-list-header {
+    padding: 0 16px 8px;
+    border-bottom: 1px solid #e8e8ed;
+    color: #86868b;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .vi-list-row {
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, .05);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, .035);
+  }
+  .vi-list-row.vi-row-complete { border-left: 3px solid #007aff; padding-left: 13px; }
+  .vi-list-check { width: 18px; height: 18px; accent-color: #007aff; cursor: pointer; }
+  .vi-list-index { color: #aeaeb2; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .vi-list-title-cell { min-width: 0; }
+  .vi-list-title-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    color: #1d1d1f;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: #f6f6f7;
+    color: #1d1d1f;
+    font-size: 12px;
+    outline: none;
+  }
+  .vi-list-title-input:focus { background: #fff; border-color: #007aff; box-shadow: 0 0 0 3px rgba(0, 122, 255, .12); }
+  .vi-list-title-input::placeholder { color: #aeaeb2; }
+  .vi-list-cell {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: #86868b;
+  }
+  .vi-list-cell.strong { color: #007aff; font-weight: 500; }
+  .vi-list-cell.done { color: #248a3d; font-weight: 500; }
+  .vi-list-actions { display: flex; justify-content: flex-end; }
+
   .vi-media { position: relative; background: #f6f6f7; height: 150px; overflow: hidden; flex: none; }
   .vi-thumb { display: block; width: 100%; height: 150px; object-fit: cover; background: #f6f6f7; }
   .vi-ph {
@@ -509,22 +616,30 @@
     </header>
 
     <div class="vi-toolbar">
-      <label class="vi-check-all"><input type="checkbox" class="vi-select-all" checked /> ${t('selectAll')}</label>
-      <label class="vi-format-wrap">
-        <span class="vi-format-label">${t('format')}</span>
-        <select class="vi-format">
-          <option value="mp4" selected>MP4</option>
-          <option value="video">video</option>
-          <option value="webm">WebM</option>
-        </select>
-      </label>
-      <label class="vi-format-wrap">
-        <span class="vi-format-label">${t('quality')}</span>
-        <select class="vi-format vi-quality"><option value="">${t('qualityAuto')}</option></select>
-      </label>
-      <div class="vi-actions">
-        <button class="vi-btn primary" type="button" data-action="download-all">${t('downloadAll')}</button>
+      <div class="vi-search-group">
+        <label class="vi-check-all"><input type="checkbox" class="vi-select-all" checked /> ${t('selectAll')}</label>
+        <div class="vi-scan-mode">
+          <label><input type="radio" name="vi-scan-mode" value="normal" checked /><span>${t('normalSearch')}</span></label>
+          <label><input type="radio" name="vi-scan-mode" value="deep" /><span>${t('deepScan')}</span></label>
+        </div>
+        <button class="vi-btn" type="button" data-action="search">${t('search')}</button>
         <button class="vi-btn" type="button" data-action="refresh">${t('refresh')}</button>
+        <span class="vi-mode-note" hidden>${t('deepView')}</span>
+      </div>
+      <div class="vi-download-group">
+        <label class="vi-format-wrap">
+          <span class="vi-format-label">${t('format')}</span>
+          <select class="vi-format">
+            <option value="mp4" selected>MP4</option>
+            <option value="video">video</option>
+            <option value="webm">WebM</option>
+          </select>
+        </label>
+        <label class="vi-format-wrap">
+          <span class="vi-format-label">${t('quality')}</span>
+          <select class="vi-format vi-quality"><option value="">${t('qualityAuto')}</option></select>
+        </label>
+        <button class="vi-btn primary" type="button" data-action="download-all">${t('downloadAll')}</button>
       </div>
     </div>
 
@@ -545,11 +660,17 @@
   const tip = q('.vi-tip');
   const boxes = q('.vi-boxes');
   const modal = q('.vi-modal');
+  const dialog = q('.vi-dialog');
+  const head = q('.vi-head');
   const numEl = q('.vi-count .num');
   const grid = q('.vi-grid');
   const selectAll = q('.vi-select-all');
   const formatSelect = q('.vi-format');
   const qualitySelect = q('.vi-quality');
+  const scanModeInputs = Array.from(shadow.querySelectorAll('.vi-scan-mode input'));
+  const modeNote = q('.vi-mode-note');
+  let dialogOffset = { x: 0, y: 0 };
+  let dragState = null;
   let qualitySeq = 0;
 
   document.addEventListener('keydown', onKeyDown, true);
@@ -561,6 +682,76 @@
   window.addEventListener('resize', schedule);
 
   shadow.addEventListener('click', onShadowClick);
+  scanModeInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      scanMode = input.value || 'normal';
+      updateScanModeUi();
+      if (!modal.hidden) runSearch();
+    });
+  });
+
+  function applyDialogOffset() {
+    if (!dialog) return;
+    dialog.style.transform = (dialogOffset.x || dialogOffset.y)
+      ? 'translate(' + dialogOffset.x + 'px, ' + dialogOffset.y + 'px)'
+      : '';
+  }
+
+  function clampDialogOffset(x, y) {
+    const w = dialog ? dialog.offsetWidth || 1 : 1;
+    const h = dialog ? dialog.offsetHeight || 1 : 1;
+    const baseLeft = (window.innerWidth - w) / 2;
+    const baseTop = (window.innerHeight - h) / 2;
+    const clamp = (value, min, max) => min > max ? 0 : Math.max(min, Math.min(value, max));
+    return {
+      x: clamp(x, 60 - w - baseLeft, window.innerWidth - 60 - baseLeft),
+      y: clamp(y, 40 - h - baseTop, window.innerHeight - 40 - baseTop)
+    };
+  }
+
+  function resetDialogPosition() {
+    dialogOffset = { x: 0, y: 0 };
+    dragState = null;
+    if (!dialog) return;
+    dialog.style.animation = '';
+    applyDialogOffset();
+  }
+
+  if (head && dialog) {
+    head.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest('button, input, select, a')) return;
+      dialog.style.animation = 'none';
+      dragState = {
+        id: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        offsetX: dialogOffset.x,
+        offsetY: dialogOffset.y
+      };
+      try { head.setPointerCapture(event.pointerId); } catch (_) {}
+      head.classList.add('dragging');
+      event.preventDefault();
+    });
+    head.addEventListener('pointermove', (event) => {
+      if (!dragState || event.pointerId !== dragState.id) return;
+      dialogOffset = clampDialogOffset(
+        dragState.offsetX + event.clientX - dragState.startX,
+        dragState.offsetY + event.clientY - dragState.startY
+      );
+      applyDialogOffset();
+    });
+    const stopDrag = (event) => {
+      if (!dragState || event.pointerId !== dragState.id) return;
+      dragState = null;
+      head.classList.remove('dragging');
+      try { head.releasePointerCapture(event.pointerId); } catch (_) {}
+    };
+    head.addEventListener('pointerup', stopDrag);
+    head.addEventListener('pointercancel', stopDrag);
+  }
+
   if (selectAll) {
     selectAll.addEventListener('change', () => {
       currentItems.forEach((item) => { item.selected = selectAll.checked; });
@@ -596,18 +787,21 @@
     try { data = JSON.parse(event.detail); } catch (_) { return; }
     if (!data || !Array.isArray(data.items)) return;
     if (!integratingScanId || data.id !== integratingScanId) return;
+    integratingScanId = '';
     integrateResources(data.items);
   });
 
   function openAllVideos() {
-    deepMode = false;
+    scanMode = 'normal';
+    updateScanModeUi();
     openModal(document.body || document.documentElement);
   }
 
   function startInspect() {
     active = true;
     picked = null;
-    deepMode = false;
+    scanMode = 'normal';
+    updateScanModeUi();
     computeHover();
   }
 
@@ -740,19 +934,45 @@
     if (!root || !root.isConnected) root = document.body || document.documentElement;
     cache = new WeakMap();
     picked = root;
-
     modal.hidden = false;
-
+    resetDialogPosition();
     if (numEl) numEl.textContent = '0';
     if (selectAll) selectAll.checked = true;
+    updateScanModeUi();
 
-    const deep = deepMode ? 40 : MAX_DEPTH;
-    let videos = collectVideos(root, 0, 0, 0, [], new Set(), deep);
-    if (deepMode) {
-      const existing = videos.map((item) => videoSrc(item.el)).filter(Boolean);
-      const resources = scanVideoResources(existing);
-      videos = videos.concat(resources);
+    if (scanMode === 'deep') {
+      startDeepView();
+    } else {
+      openNormalView(root);
     }
+
+    requestCapturedResources();
+    requestQualities();
+    if (deepScanTimer) clearTimeout(deepScanTimer);
+    if (capturePollTimer) clearInterval(capturePollTimer);
+    deepScanTimer = setTimeout(requestCapturedResources, 2500);
+    capturePollTimer = setInterval(requestCapturedResources, 5000);
+  }
+
+  function updateScanModeUi() {
+    scanModeInputs.forEach((input) => { input.checked = input.value === scanMode; });
+    if (modeNote) modeNote.hidden = scanMode !== 'deep';
+  }
+
+  function runSearch() {
+    if (modal.hidden) return;
+    if (scanMode === 'deep') {
+      startDeepView();
+    } else {
+      integratingScanId = '';
+      scanLoading = false;
+      openNormalView(picked);
+    }
+  }
+
+  // 普通搜索：完全沿用原来的 DOM 视频扫描逻辑。
+  function openNormalView(root) {
+    const videos = collectVideos(root, 0, 0, 0, [], new Set(), MAX_DEPTH);
     currentItems = videos.map((item, index) => buildItem(item, index));
 
     currentItems.forEach((item) => {
@@ -772,16 +992,21 @@
       empty.textContent = '渲染视频列表时出错，请查看控制台。';
       grid.appendChild(empty);
     }
-
     loadSizes();
+  }
 
-    requestCapturedResources();
-    requestQualities();
+  // 深度扫描：三层资源模型独占视图，不再追加到普通结果里。
+  function startDeepView() {
+    integratingScanId = '';
+    scanLoading = true;
+    currentItems = [];
+    if (numEl) numEl.textContent = '0';
+    grid.replaceChildren();
+    const loading = document.createElement('div');
+    loading.className = 'vi-empty';
+    loading.textContent = t('deepScanning');
+    grid.appendChild(loading);
     requestResourceScan();
-    if (deepScanTimer) clearTimeout(deepScanTimer);
-    if (capturePollTimer) clearInterval(capturePollTimer);
-    deepScanTimer = setTimeout(requestCapturedResources, 2500);
-    capturePollTimer = setInterval(requestCapturedResources, 5000);
   }
 
   function requestCapturedResources() {
@@ -801,45 +1026,107 @@
       integratingScanId = '';
     }
     setTimeout(() => {
-      if (integratingScanId === id) integratingScanId = '';
+      if (integratingScanId !== id) return;
+      integratingScanId = '';
+      if (scanLoading && scanMode === 'deep' && !modal.hidden) integrateResources([]);
     }, 8000);
   }
 
-  function normalizeMediaKey(url) {
+  const SIGNATURE_PARAM = /^(bti|bt|ft|a|sign|signature|token|t|expires|expire|ts|nonce|stamp|timestamp|x-amz-[^=]*|x-goog-[^=]*|se|sv|sp|sig|_signature)$/i;
+  const ID_PARAM = /^(id|vid|video_id|aweme_id|bvid|cid|item_id|itemId)$/i;
+
+  function resourceFingerprint(url) {
     if (!url || typeof url !== 'string') return '';
-    try {
-      const u = new URL(url, location.href);
-      return (u.origin + u.pathname).replace(/\/$/, '');
-    } catch (_) {
-      return String(url).split('?')[0].split('#')[0];
+    if (/^blob:|^data:|^mse:/i.test(url)) return '';
+    let u;
+    try { u = new URL(url, location.href); } catch (_) { return ''; }
+    const host = u.hostname.replace(/^www\./i, '');
+    const path = u.pathname.replace(/\/+$/, '');
+    if (/bilibili/i.test(host)) {
+      const bv = (path.match(/(BV[0-9A-Za-z]{10})/) || [])[1];
+      if (bv) return 'bilibili:' + bv;
     }
+    if (/(tiktok|douyin|aweme)/i.test(host + path)) {
+      const id = (path.match(/\/([0-9]{12,}|[A-Za-z0-9_-]{18,})\/?$/) || [])[1];
+      if (id) return host + ':' + id;
+    }
+    const ids = [];
+    u.searchParams.forEach((value, key) => {
+      if (ID_PARAM.test(key) && value) ids.push(key + '=' + value);
+    });
+    if (ids.length) return host + path + '?' + ids.sort().join('&');
+    const kept = [];
+    u.searchParams.forEach((value, key) => {
+      if (!SIGNATURE_PARAM.test(key)) kept.push(key + '=' + value);
+    });
+    return host + path + (kept.length ? '?' + kept.sort().join('&') : '');
   }
 
-  // Layer 2：把发现的资源合并成逻辑视频，只追加新卡片，不改动已有 video 卡片。
+  function mergeResource(prev, next) {
+    const merged = Object.assign({}, prev);
+    ['size', 'width', 'height', 'duration', 'score'].forEach((key) => {
+      if ((Number(next[key]) || 0) > (Number(merged[key]) || 0)) merged[key] = next[key];
+    });
+    ['audioUrl', 'videoUrl', 'poster', 'title', 'kind'].forEach((key) => {
+      if (!merged[key] && next[key]) merged[key] = next[key];
+    });
+    const sources = Array.from(new Set([
+      ...(Array.isArray(prev.sources) ? prev.sources : [prev.source]),
+      next.source
+    ].filter(Boolean)));
+    merged.sources = sources;
+    merged.source = sources.join('+');
+    return merged;
+  }
+
+  // 深度视图：按指纹全量重建逻辑视频集合，不再追加。
   function integrateResources(resources) {
-    if (!Array.isArray(resources) || !resources.length) return;
-    if (!modal || modal.hidden) return;
-    const existing = new Set();
-    currentItems.forEach((item) => {
-      const key = normalizeMediaKey(item.src);
-      if (key) existing.add(key);
-    });
-    const additions = [];
-    const MAX_ADD = 120;
-    resources.forEach((res) => {
+    scanLoading = false;
+    if (!modal || modal.hidden || scanMode !== 'deep') return;
+    const grouped = new Map();
+    (Array.isArray(resources) ? resources : []).forEach((res) => {
       if (!res || !res.url) return;
-      if (additions.length >= MAX_ADD) return;
-      if (/^blob:|^data:|^mse:/i.test(res.url)) return;
-      const key = normalizeMediaKey(res.url);
-      if (!key || existing.has(key)) return;
-      existing.add(key);
-      additions.push(buildResourceItem(res, currentItems.length + additions.length));
+      const key = resourceFingerprint(res.url) || resourceFingerprint(res.videoUrl);
+      if (!key) return;
+      const prev = grouped.get(key);
+      grouped.set(key, prev ? mergeResource(prev, res) : Object.assign({ sources: [res.source].filter(Boolean) }, res));
     });
-    if (!additions.length) return;
-    currentItems = currentItems.concat(additions);
+    const completeness = (r) => {
+      let value = 0;
+      if ((Number(r.size) || 0) > 0) value += 4;
+      if ((Number(r.width) || 0) > 0 && (Number(r.height) || 0) > 0) value += 4;
+      if ((Number(r.duration) || 0) > 0) value += 1;
+      if (r.audioUrl) value += 1;
+      if (r.title) value += 1;
+      return value;
+    };
+    const merged = Array.from(grouped.values()).sort((a, b) => {
+      const completeDiff = completeness(b) - completeness(a);
+      if (completeDiff) return completeDiff;
+      if ((Number(b.size) || 0) !== (Number(a.size) || 0)) return (Number(b.size) || 0) - (Number(a.size) || 0);
+      return (Number(b.score) || 0) - (Number(a.score) || 0);
+    }).slice(0, 120);
+    currentItems = merged.map((res, index) => buildResourceItem(res, index));
+    currentItems.forEach((item) => {
+      const videoTask = downloadTasks.get(itemKey(item));
+      if (videoTask) videoTask.item = item;
+    });
     if (numEl) numEl.textContent = String(currentItems.length);
-    renderGrid();
-    refreshDownloadButtons();
+    if (!currentItems.length) {
+      grid.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'vi-empty';
+      empty.textContent = t('deepEmpty');
+      grid.appendChild(empty);
+      return;
+    }
+    try {
+      renderGrid();
+      refreshDownloadButtons();
+    } catch (error) {
+      console.error('[VideoInspector] deep render failed:', error);
+      grid.replaceChildren();
+    }
     loadSizes();
   }
 
@@ -858,6 +1145,9 @@
       duration: res.duration ? formatDuration(res.duration) : '-',
       resolution: res.width && res.height ? res.width + '×' + res.height : '-',
       sizeText: formatSize(size),
+      hasSize: size > 0,
+      hasResolution: !!(res.width && res.height),
+      hasDuration: !!(res.duration && Number(res.duration) > 0),
       paused: true,
       currentTime: 0,
       isResource: true,
@@ -931,6 +1221,8 @@
 
   function closeModal() {
     modal.hidden = true;
+    integratingScanId = '';
+    scanLoading = false;
     if (deepScanTimer) clearTimeout(deepScanTimer);
     if (capturePollTimer) clearInterval(capturePollTimer);
     grid.querySelectorAll('.vi-thumb, video').forEach((el) => {
@@ -969,6 +1261,7 @@
 
   function renderGrid() {
     grid.replaceChildren();
+    grid.classList.toggle('vi-list-mode', scanMode === 'deep');
 
     if (!currentItems.length) {
       const empty = document.createElement('div');
@@ -983,8 +1276,86 @@
     }
 
     const frag = document.createDocumentFragment();
-    currentItems.forEach((item) => frag.appendChild(createCard(item)));
+    if (scanMode === 'deep') {
+      const header = document.createElement('div');
+      header.className = 'vi-list-header';
+      ['', '#', t('customTitle'), t('metaDuration'), t('metaResolution'), t('metaSize'), t('source'), t('download')].forEach((label) => {
+        const cell = document.createElement('span');
+        cell.textContent = label;
+        header.appendChild(cell);
+      });
+      frag.appendChild(header);
+    }
+    currentItems.forEach((item) => frag.appendChild(scanMode === 'deep' ? createListRow(item) : createCard(item)));
     grid.appendChild(frag);
+  }
+
+  function listCell(className, text, strong) {
+    const cell = document.createElement('div');
+    cell.className = 'vi-list-cell' + (strong ? ' strong' : '') + (className ? ' ' + className : '');
+    cell.textContent = text;
+    cell.title = text;
+    return cell;
+  }
+
+  function createListRow(item) {
+    const row = document.createElement('article');
+    row.className = 'vi-list-row';
+    if (item.hasSize && item.hasResolution) row.classList.add('vi-row-complete');
+    row.setAttribute('data-index', String(item.index));
+    const key = itemKey(item);
+    const task = downloadTasks.get(key);
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'vi-list-check';
+    check.checked = !!item.selected;
+    check.title = t('selectAll');
+    check.addEventListener('change', () => {
+      item.selected = check.checked;
+      if (selectAll) selectAll.checked = currentItems.length > 0 && currentItems.every((i) => i.selected);
+    });
+    row.appendChild(check);
+
+    const index = document.createElement('span');
+    index.className = 'vi-list-index';
+    index.textContent = '#' + (item.index + 1);
+    row.appendChild(index);
+
+    const titleCell = document.createElement('div');
+    titleCell.className = 'vi-list-title-cell';
+    const titleText = item.label || (item.isResource ? t('resourcePreview') : 'video');
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'vi-list-title-input';
+    titleInput.placeholder = t('customTitlePlaceholder');
+    titleInput.value = item.customTitle || titleText;
+    titleInput.title = titleText;
+    titleInput.setAttribute('data-index', String(item.index));
+    titleInput.addEventListener('input', () => { item.customTitle = titleInput.value; });
+    titleCell.appendChild(titleInput);
+    row.appendChild(titleCell);
+
+    row.appendChild(listCell('', item.duration, item.hasDuration));
+    row.appendChild(listCell('', item.resolution, item.hasResolution));
+    row.appendChild(listCell('', item.sizeText, item.hasSize));
+    row.appendChild(listCell('', '发现 · ' + (item.discoverySource || 'scan'), false));
+
+    const actions = document.createElement('div');
+    actions.className = 'vi-list-actions';
+    const downloadBtn = makeButton(t('download'), 'download', item.index, 'primary');
+    if (task && task.phase === 'downloading') {
+      setButtonLoading(downloadBtn, true, t('downloading'));
+    } else if (task && task.phase === 'done') {
+      downloadBtn.textContent = t('downloadDone');
+    } else if (task && (task.phase === 'failed' || task.phase === 'cancelled')) {
+      downloadBtn.textContent = t('downloadFailed');
+      downloadBtn.title = task.lastError || '';
+    }
+    actions.appendChild(downloadBtn);
+    row.appendChild(actions);
+
+    return row;
   }
 
   function createCard(item) {
@@ -1472,7 +1843,7 @@
 
     if (action === 'close') closeModal();
     else if (action === 'feedback') window.open(FEEDBACK_URL, '_blank', 'noopener,noreferrer');
-    else if (action === 'refresh') openModal(picked);
+    else if (action === 'refresh' || action === 'search') runSearch();
     else if (action === 'download-all') {
       currentItems.filter((item) => item.selected).forEach((item) => startDownload(item));
     } else if (action === 'download') {

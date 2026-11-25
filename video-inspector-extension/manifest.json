@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "视频下载工具-吴文龙",
   "description": "选中页面元素，以网格模态框展示并下载其下所有视频。可在B站私信反馈问题。",
-  "version": "1.9.0",
+  "version": "1.10.5",
   "homepage_url": "https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0",
   "icons": {
     "16": "icons/icon16.png",
