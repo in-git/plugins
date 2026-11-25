@@ -12,9 +12,13 @@
   const PROBE_SIZE_RESPONSE = '__video_inspector_probe_size_response__';
   const GET_QUALITIES = '__video_inspector_get_qualities__';
   const QUALITIES = '__video_inspector_qualities__';
+  const RESUME_QUERY = '__video_inspector_resume_query__';
+  const RESUME_LIST = '__video_inspector_resume_list__';
   const SCAN_RESOURCES = '__video_inspector_scan_resources__';
   const SCAN_RESULT = '__video_inspector_scan_result__';
   const controllers = new Map();
+  const jobLocks = new Map();
+  const jobControllers = new Map();
   const MAX_ITEMS = 400;
   const MAX_BYTES = 1024 * 1024 * 1024;
   const NativeMediaSource = window.MediaSource;
@@ -24,6 +28,190 @@
   const engine = window.__viDownloadEngine || null;
   const qualityCache = new Map();
   const QUALITY_CACHE_TTL = 5 * 60 * 1000;
+
+  // ===== 断点续传：未完成的分块落盘到页面同源 IndexedDB，刷新/断网后可继续 =====
+  const DB_NAME = 'vi-downloads';
+  const DB_VERSION = 1;
+  const JOB_TTL = 7 * 24 * 60 * 60 * 1000;
+  const FLUSH_BYTES = 8 * 1024 * 1024;
+  let dbPromise = null;
+
+  function openDb() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(DB_NAME, DB_VERSION); } catch (_) { resolve(null); return; }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('jobs')) db.createObjectStore('jobs', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('chunks')) {
+          const store = db.createObjectStore('chunks', { keyPath: 'id' });
+          store.createIndex('jobId', 'jobId', { unique: false });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    });
+    return dbPromise;
+  }
+
+  function idbRun(storeName, mode, fn) {
+    return openDb().then((db) => new Promise((resolve) => {
+      if (!db) { resolve(null); return; }
+      try {
+        const tx = db.transaction(storeName, mode);
+        const os = tx.objectStore(storeName);
+        let out = null;
+        const ret = fn(os, (v) => { out = v; });
+        if (ret && ret.__viReq) {
+          ret.__viReq.onsuccess = () => { out = ret.__viReq.result; };
+        }
+        tx.oncomplete = () => resolve(out);
+        tx.onerror = () => resolve(null);
+        tx.onabort = () => resolve(null);
+      } catch (_) { resolve(null); }
+    }));
+  }
+
+  function jobGet(id) {
+    return idbRun('jobs', 'readonly', (os, done) => {
+      const req = os.get(id);
+      req.onsuccess = () => done(req.result || null);
+      return { __viReq: req };
+    });
+  }
+
+  function jobPut(job) {
+    job.updatedAt = Date.now();
+    return idbRun('jobs', 'readwrite', (os) => { os.put(job); });
+  }
+
+  function chunkPut(record) {
+    return idbRun('chunks', 'readwrite', (os) => { os.put(record); });
+  }
+
+  function chunksFor(jobId, role) {
+    return openDb().then((db) => new Promise((resolve) => {
+      if (!db) { resolve([]); return; }
+      const out = [];
+      try {
+        const tx = db.transaction('chunks', 'readonly');
+        const cursor = tx.objectStore('chunks').index('jobId').openCursor(IDBKeyRange.only(jobId));
+        cursor.onsuccess = () => {
+          const cur = cursor.result;
+          if (!cur) return;
+          if (cur.value.role === role) out.push(cur.value);
+          cur.continue();
+        };
+        tx.oncomplete = () => resolve(out.sort((a, b) => a.seq - b.seq));
+        tx.onerror = () => resolve([]);
+      } catch (_) { resolve([]); }
+    }));
+  }
+
+  function chunksDeleteRole(jobId, role) {
+    return openDb().then((db) => new Promise((resolve) => {
+      if (!db) { resolve(); return; }
+      try {
+        const tx = db.transaction('chunks', 'readwrite');
+        const cursor = tx.objectStore('chunks').index('jobId').openCursor(IDBKeyRange.only(jobId));
+        cursor.onsuccess = () => {
+          const cur = cursor.result;
+          if (!cur) return;
+          if (cur.value.role === role) cur.delete();
+          cur.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (_) { resolve(); }
+    }));
+  }
+
+  function jobDelete(id) {
+    return openDb().then((db) => new Promise((resolve) => {
+      if (!db) { resolve(); return; }
+      try {
+        const tx = db.transaction(['jobs', 'chunks'], 'readwrite');
+        tx.objectStore('jobs').delete(id);
+        const cursor = tx.objectStore('chunks').index('jobId').openCursor(IDBKeyRange.only(id));
+        cursor.onsuccess = () => {
+          const cur = cursor.result;
+          if (!cur) return;
+          cur.delete();
+          cur.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (_) { resolve(); }
+    }));
+  }
+
+  function jobPercent(job) {
+    const tracks = Object.keys(job.tracks || {}).map((k) => job.tracks[k]).filter((tr) => tr && tr.loaded > 0);
+    if (!tracks.length) return 0;
+    const loaded = tracks.reduce((sum, tr) => sum + (tr.loaded || 0), 0);
+    const total = tracks.reduce((sum, tr) => sum + (tr.total || 0), 0);
+    if (!total) return 0;
+    return Math.max(1, Math.min(99, Math.round((loaded / total) * 100)));
+  }
+
+  function jobsForPage(pageUrl) {
+    const target = resourceKey(pageUrl || '');
+    return openDb().then((db) => new Promise((resolve) => {
+      if (!db) { resolve([]); return; }
+      const out = [];
+      try {
+        const tx = db.transaction('jobs', 'readonly');
+        const cursor = tx.objectStore('jobs').openCursor();
+        cursor.onsuccess = () => {
+          const cur = cursor.result;
+          if (!cur) return;
+          const job = cur.value;
+          if (!job || !job.pageUrl) { cur.continue(); return; }
+          if (Date.now() - (job.updatedAt || 0) > JOB_TTL) {
+            cur.delete();
+            cur.continue();
+            return;
+          }
+          if (resourceKey(job.pageUrl) === target) out.push(job);
+          cur.continue();
+        };
+        tx.oncomplete = () => {
+          resolve(out
+            .map((job) => ({
+              id: job.id,
+              filename: job.filename || '',
+              jobKey: job.jobKey || '',
+              pageUrl: job.pageUrl,
+              percent: jobPercent(job),
+              size: Object.keys(job.tracks || {}).reduce((sum, k) => sum + (job.tracks[k] && job.tracks[k].loaded || 0), 0),
+              updatedAt: job.updatedAt || 0
+            }))
+            .sort((a, b) => b.updatedAt - a.updatedAt));
+        };
+        tx.onerror = () => resolve([]);
+      } catch (_) { resolve([]); }
+    }));
+  }
+
+  function hashStr(text) {
+    let h = 5381;
+    const s = String(text || '');
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+
+  function jobIdFor(payload, filename) {
+    // 刻意不包含签名直链：TikTok 等平台的 CDN 域名/签名每次解析都会变，包含它将永远对不上断点；
+    // 页面传入的 jobKey 取资源 URL 的 origin+pathname，用于区分同一页面里的多个视频。
+    return 'vi' + hashStr([
+      resourceKey(payload.pageUrl || ''),
+      payload.qualityId || '',
+      payload.jobKey || '',
+      String(filename || '').replace(/\.[^.]+$/, '')
+    ].join('|'));
+  }
 
   function fire(name, detail) {
     document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(detail) }));
@@ -574,6 +762,8 @@
     const controller = new AbortController();
     controllers.set(id, controller);
     let objectUrl = '';
+    let heldJobId = '';
+    let releaseJobLock = null;
 
     const onProgress = (loaded, total) => {
       const percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : 0;
@@ -619,41 +809,207 @@
       const dlArg = dlMeta
         ? { __viMeta: dlMeta, __viHeaders: payload.headers || null }
         : payload.headers;
+      // 音频轨：优先带 Range 拉取（解析阶段探测已验证 Range 可用），失败再退回普通请求
+      const audioHeaders = payload.headers || null;
+      const fetchAudioTrack = async (audioUrl) => {
+        const rangedMeta = Object.assign({}, dlMeta || {}, { forceRange: true });
+        try {
+          return await engine.fetchWhole(audioUrl, controller.signal, onProgress, audioHeaders, rangedMeta);
+        } catch (e) {
+          console.warn('[VI-AUDIO] audio ranged fetch failed, retry plain', String(e && e.message || e));
+          return await engine.fetchWhole(audioUrl, controller.signal, onProgress, audioHeaders, dlMeta || undefined);
+        }
+      };
+
+      // ===== 主轨断点续传：分块写入 IndexedDB，中断后可从已下载位置继续 =====
+      const persistable = kind !== 'hls' && kind !== 'dash';
+      const jobId = persistable ? jobIdFor(payload, filename) : '';
+      // 同一任务的并发会话串行化：先让上一个（例如刚被暂停的）会话连分块一起落盘结束，
+      // 否则两个会话可能同时写同一个 chunk seq，拼出损坏文件。
+      let releaseJob = null;
+      if (jobId) {
+        const prevLock = jobLocks.get(jobId) || Promise.resolve();
+        const prevCtrl = jobControllers.get(jobId);
+        if (prevCtrl) { try { prevCtrl.abort(); } catch (_) {} }
+        const gate = new Promise((resolve) => { releaseJob = resolve; });
+        jobLocks.set(jobId, prevLock.then(() => gate));
+        await prevLock;
+        if (controller.signal.aborted) {
+          releaseJob();
+          throw new Error('cancelled');
+        }
+        jobControllers.set(jobId, controller);
+        heldJobId = jobId;
+        releaseJobLock = releaseJob;
+      }
+      let job = jobId ? await jobGet(jobId) : null;
+      if (jobId && (!job || job.kind !== kind)) {
+        if (job) await jobDelete(jobId);
+        try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) {}
+        job = {
+          id: jobId,
+          pageUrl: payload.pageUrl || '',
+          qualityId: payload.qualityId || '',
+          jobKey: payload.jobKey || '',
+          filename: filename || '',
+          kind,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          tracks: {}
+        };
+      }
+
+      const createSink = (role, targetUrl, resumeTrack) => {
+        const track = resumeTrack
+          ? Object.assign({}, resumeTrack)
+          : { url: targetUrl, loaded: 0, total: 0, etag: '', chunks: 0, contentType: '' };
+        job.tracks[role] = track;
+        let pending = [];
+        let pendingBytes = 0;
+        let chain = Promise.resolve();
+        const persist = () => {
+          const parts = pending;
+          pending = [];
+          pendingBytes = 0;
+          if (!parts.length) return Promise.resolve();
+          const seq = track.chunks++;
+          return chunkPut({ id: job.id + ':' + role + ':' + seq, jobId: job.id, role, seq, blob: new Blob(parts) })
+            .then(() => jobPut(job))
+            .catch((e) => console.warn('[VI-DL] persist chunk failed', e));
+        };
+        return {
+          track,
+          push(bytes, loaded, total) {
+            pending.push(bytes);
+            pendingBytes += bytes.byteLength;
+            track.loaded = loaded;
+            if (total) track.total = total;
+            if (pendingBytes >= FLUSH_BYTES) chain = chain.then(persist);
+          },
+          flush() {
+            chain = chain.then(persist);
+            return chain;
+          },
+          async blob(fallback, type) {
+            chain = chain.then(persist);
+            await chain;
+            const parts = await chunksFor(job.id, role);
+            if (!parts.length) return fallback;
+            const storedBytes = parts.reduce((sum, p) => sum + ((p.blob && p.blob.size) || 0), 0);
+            // 分块存储不完整时宁可报错，也不能产出被截断的文件
+            if (storedBytes !== track.loaded) throw new Error('chunk store incomplete ' + storedBytes + '/' + track.loaded);
+            return new Blob(parts.map((p) => p.blob), { type: type || (fallback && fallback.type) || 'video/mp4' });
+          }
+        };
+      };
+
+      const fetchMainTrack = async (targetUrl, headersArg, metaArg) => {
+        const prev = job && job.tracks && job.tracks.main;
+        // 以磁盘上的分块为准修正进度：进程被杀时可能出现“分块已写、进度未更新”
+        if (prev && prev.chunks > 0) {
+          const stored = await chunksFor(job.id, 'main');
+          prev.loaded = stored.reduce((sum, p) => sum + ((p.blob && p.blob.size) || 0), 0);
+          prev.chunks = stored.length;
+        }
+        // 上次已经下完、只是合并/校验阶段失败：直接复用分块，不再重新下载
+        if (prev && prev.total && prev.loaded >= prev.total && prev.chunks > 0) {
+          const done = await chunksFor(job.id, 'main');
+          const storedBytes = done.reduce((sum, p) => sum + ((p.blob && p.blob.size) || 0), 0);
+          if (done.length && storedBytes === prev.loaded) {
+            console.log('[VI-DL] reuse completed chunks', done.length, 'bytes', prev.loaded);
+            const ext = /webm/i.test(prev.contentType || '') ? 'webm' : 'mp4';
+            return {
+              blob: new Blob(done.map((p) => p.blob), { type: prev.contentType || 'video/mp4' }),
+              contentType: prev.contentType || '',
+              ext
+            };
+          }
+        }
+        let resumeTrack = (prev && prev.loaded > 0 && prev.total && prev.loaded < prev.total && prev.etag && prev.chunks > 0)
+          ? prev
+          : null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (!resumeTrack) {
+            await chunksDeleteRole(job.id, 'main');
+            if (job.tracks.main) delete job.tracks.main;
+          }
+          const sink = createSink('main', targetUrl, resumeTrack);
+          const base = resumeTrack ? resumeTrack.loaded : 0;
+          if (resumeTrack) console.log('[VI-DL] resume from', base, '/', resumeTrack.total);
+          const meta2 = Object.assign({}, metaArg || {}, {
+            resume: resumeTrack ? {
+              loaded: base,
+              total: resumeTrack.total,
+              etag: resumeTrack.etag,
+              contentType: resumeTrack.contentType || ''
+            } : null,
+            onMeta: (info) => {
+              if (info.etag) sink.track.etag = info.etag;
+              if (info.contentType) sink.track.contentType = info.contentType;
+              if (info.total) sink.track.total = info.total;
+            },
+            onChunk: (bytes, loaded, total) => sink.push(bytes, base + loaded, total || sink.track.total || 0)
+          });
+          try {
+            const r = await engine.fetchWhole(targetUrl, controller.signal, (loaded, total) => {
+              if (total) sink.track.total = total;
+              onProgress(base + loaded, total || sink.track.total || 0);
+            }, headersArg, meta2);
+            const blob = await sink.blob(r.tracks && r.tracks[0], r.contentType || '');
+            return { blob, contentType: r.contentType || '', ext: r.ext || 'mp4' };
+          } catch (e) {
+            await sink.flush().catch(() => {});
+            const message = String(e && e.message || e);
+            if (attempt === 0 && resumeTrack && /resume unsupported|unexpected range|HTTP 41[56]/.test(message)) {
+              console.warn('[VI-DL] resume invalid, restart from 0', message);
+              resumeTrack = null;
+              continue;
+            }
+            throw e;
+          }
+        }
+        throw new Error('resume failed');
+      };
 
       if (!url) throw new Error('empty url');
       if (kind === 'blob' || kind === 'record') throw new Error('needs_recording');
 
       let result;
       if (kind === 'streams' && payload.videoUrl) {
-        const v = await engine.fetchWhole(payload.videoUrl, controller.signal, onProgress, dlArg);
+        const v = await fetchMainTrack(payload.videoUrl, dlArg, dlMeta || undefined);
         let a = null;
         if (payload.audioUrl) {
-          try { a = await engine.fetchWhole(payload.audioUrl, controller.signal, onProgress, dlArg); }
+          try { a = await fetchAudioTrack(payload.audioUrl); }
           catch (e) { console.warn('[VI-AUDIO] audio fetch failed', String(e && e.message || e)); a = null; }
         } else {
           console.warn('[VI-AUDIO] streams without audioUrl -> will be silent');
         }
-        console.log('[VI-AUDIO] streams fetched', { videoBytes: (v.tracks[0] && v.tracks[0].size) || 0, audioBytes: (a && a.tracks[0] && a.tracks[0].size) || 0 });
+        console.log('[VI-AUDIO] streams fetched', { videoBytes: (v.blob && v.blob.size) || 0, audioBytes: (a && a.tracks[0] && a.tracks[0].size) || 0 });
+        if (payload.audioUrl && !a) throw new Error('audio track unavailable');
         result = {
-          tracks: a ? [v.tracks[0], a.tracks[0]] : [v.tracks[0]],
-          ext: 'mp4', duration: expectedDuration || 0, skipDurationCheck: !!a
+          tracks: a ? [v.blob, a.tracks[0]] : [v.blob],
+          ext: v.ext || 'mp4', duration: expectedDuration || 0, skipDurationCheck: !!a
         };
       } else if (kind === 'streams' && videoUrl) {
-        const v = await engine.fetchWhole(videoUrl, controller.signal, onProgress, dlArg);
+        const v = await fetchMainTrack(videoUrl, dlArg, dlMeta || undefined);
         let a = null;
         if (audioUrl) {
-          try { a = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg); }
+          try { a = await fetchAudioTrack(audioUrl); }
           catch (e) { console.warn('[VI-AUDIO] audio fetch failed', String(e && e.message || e)); a = null; }
         } else {
           console.warn('[VI-AUDIO] streams without audioUrl -> will be silent');
         }
+        if (audioUrl && !a) throw new Error('audio track unavailable');
         result = {
-          tracks: a ? [v.tracks[0], a.tracks[0]] : [v.tracks[0]],
-          ext: 'mp4', duration: expectedDuration || 0, skipDurationCheck: false
+          tracks: a ? [v.blob, a.tracks[0]] : [v.blob],
+          ext: v.ext || 'mp4', duration: expectedDuration || 0, skipDurationCheck: false
         };
       } else if (kind === 'hls') result = await engine.downloadHls(url, controller.signal, onProgress, expectedDuration, dlMeta || undefined);
       else if (kind === 'dash') result = await engine.downloadDash(url, controller.signal, onProgress, expectedDuration, dlMeta || undefined);
-      else result = await engine.fetchWhole(url, controller.signal, onProgress, dlArg);
+      else {
+        const r = await fetchMainTrack(url, dlArg, dlMeta || undefined);
+        result = { tracks: [r.blob], ext: r.ext || 'mp4', duration: expectedDuration || 0 };
+      }
 
       let tracks = result.tracks || [result.blob];
       let finalBlob;
@@ -683,15 +1039,17 @@
           console.warn('[VI-AUDIO] skip merge: source video already has audio');
           finalBlob = tracks[0];
           finalExt = result.ext || 'mp4';
-        } else try {
+        } else {
           finalBlob = await engine.mergeStreams(buffers);
           finalExt = 'mp4';
-          console.log('[VI-AUDIO] merge ok, bytes', finalBlob.size);
-        } catch (mergeError) {
-          // 合并失败（如音频是 MP3 无法注入 MP4 容器）：回退为仅保存视频轨，避免整体失败。
-          console.error('[VI-AUDIO] merge FAILED -> fallback to silent video', mergeError);
-          finalBlob = tracks[0];
-          finalExt = result.ext || 'mp4';
+          // P0.5：合并结果必须真的带音轨，绝不再静默产出静音文件
+          if (typeof engine.probeTracks === 'function') {
+            const mergedProbe = await engine.probeTracks(await finalBlob.arrayBuffer());
+            console.log('[VI-AUDIO] merge ok', mergedProbe, 'bytes', finalBlob.size);
+            if (!mergedProbe.hasAudio) throw new Error('merge produced no audio track');
+          } else {
+            console.log('[VI-AUDIO] merge ok, bytes', finalBlob.size);
+          }
         }
       } else {
         finalBlob = tracks[0];
@@ -742,6 +1100,8 @@
       objectUrl = URL.createObjectURL(finalBlob);
       const baseName = String(filename || 'video').replace(/\.[^.]+$/, '');
       saveHref(objectUrl, baseName + '.' + finalExt);
+      // 成功落盘后清理断点数据
+      if (jobId) await jobDelete(jobId);
       fire(RESPONSE, { id, ok: true, method: kind, size: finalBlob.size, duration: result.duration, validated: true });
     })().catch((error) => {
       const message = String((error && error.message) || error);
@@ -749,7 +1109,21 @@
       fire(RESPONSE, { id, ok: false, error: cancelled ? 'cancelled' : message, validated: false });
     }).finally(() => {
       controllers.delete(id);
+      if (releaseJobLock) {
+        jobControllers.delete(heldJobId);
+        releaseJobLock();
+      }
       if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 15 * 60 * 1000);
+    });
+  });
+
+  // 查询当前页面的未完成下载，供 UI 显示“继续下载 xx%”
+  document.addEventListener(RESUME_QUERY, (event) => {
+    let payload;
+    try { payload = JSON.parse(event.detail); } catch (_) { return; }
+    const id = payload && payload.id;
+    jobsForPage((payload && payload.pageUrl) || location.href).then((jobs) => {
+      fire(RESUME_LIST, { id, jobs });
     });
   });
 })();

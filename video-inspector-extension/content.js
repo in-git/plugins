@@ -14,6 +14,8 @@
   const DL_RESPONSE = '__video_inspector_download_response__';
   const DL_PROGRESS = '__video_inspector_download_progress__';
   const DL_CANCEL = '__video_inspector_download_cancel__';
+  const DL_RESUME_QUERY = '__video_inspector_resume_query__';
+  const DL_RESUME_LIST = '__video_inspector_resume_list__';
   const GET_RESOURCES = '__video_inspector_get_resources__';
   const RESOURCES = '__video_inspector_resources__';
   const DOWNLOAD_RESOURCE = '__video_inspector_download_resource__';
@@ -37,11 +39,12 @@
     "actionTitle": "视频下载工具-吴文龙",
     "contextMenuTitle": "下载页面视频",
     "badgeIdle": "探查",
-    "badgeInspecting": "探查中：移动查看 · 单击选择元素 · 框选区域 · Esc 退出",
+    "badgeInspecting": "探查中：移动查看 · 单击选择视频区域 · Esc 退出",
     "badgeArea": "框选模式：按住鼠标左键拖拽框选视频区域 · Esc 退出",
     "areaFound": "框选区域内发现 $count$ 个视频",
     "areaEmpty": "框选区域内没有视频，请重新框选",
-    "shortcutHint": "快捷键 Alt+S：框选页面区域，下载框内的视频 · Esc 退出",
+    "shortcutHint": "快捷键 Alt+S：像审查元素一样移动高亮、单击选择视频区域 · Esc 退出",
+    "inspectEmpty": "这里没有找到视频，换个位置再点一次",
     "badgeFound": "已探查到 $count$ 个视频",
     "badgeActiveShort": "探查中",
     "dialogTitle": "视频探查结果",
@@ -87,6 +90,13 @@
     "downloadDone": "已下载",
     "completed": "已完成",
     "downloadFailed": "下载失败",
+    "queuedText": "排队中",
+    "resumeText": "继续 $percent$%",
+    "dlStats": "已完成 $done$/$total$ · 下载中 $active$ · 排队 $queued$ · 失败 $failed$",
+    "pausedCount": "已暂停 $count$",
+    "pauseAll": "暂停全部",
+    "retryFailed": "重试失败",
+    "clearDone": "清理已完成",
     "noDownloadableSrc": "无可下载源",
     "customTitle": "自定义标题",
     "customTitlePlaceholder": "输入下载时的标题",
@@ -331,6 +341,20 @@
     background: #fff;
     border-bottom: 1px solid #f5f5f7;
   }
+  .vi-dlbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 40px;
+    background: #f8f9fb;
+    border-bottom: 1px solid #eef0f3;
+  }
+  .vi-dlbar[hidden] { display: none; }
+  .vi-dlbar-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+  .vi-dlbar-progress { flex: 0 0 160px; height: 6px; border-radius: 3px; background: #e6e8ec; overflow: hidden; }
+  .vi-dlbar-fill { display: block; height: 100%; width: 0; background: #007aff; transition: width .25s; }
+  .vi-dlbar-text { font-size: 12px; color: #6e6e73; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vi-dlbar-actions { display: flex; gap: 8px; margin-left: auto; }
   .vi-search-group, .vi-download-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .vi-download-group { margin-left: auto; }
   .vi-scan-mode {
@@ -706,6 +730,18 @@
       </div>
     </div>
 
+    <div class="vi-dlbar" hidden>
+      <div class="vi-dlbar-main">
+        <div class="vi-dlbar-progress"><span class="vi-dlbar-fill"></span></div>
+        <div class="vi-dlbar-text"></div>
+      </div>
+      <div class="vi-dlbar-actions">
+        <button class="vi-btn" type="button" data-action="dl-pause">${t('pauseAll')}</button>
+        <button class="vi-btn" type="button" data-action="dl-retry">${t('retryFailed')}</button>
+        <button class="vi-btn" type="button" data-action="dl-clear">${t('clearDone')}</button>
+      </div>
+    </div>
+
     <div class="vi-grid"></div>
 
     <footer class="vi-footer">
@@ -743,6 +779,28 @@
   let areaMode = false;
   let areaStart = null;
   let areaToastTimer = null;
+  let resumeSeq = 0;
+
+  // 断点续传：把页面里的未完成任务同步到卡片按钮上
+  document.addEventListener(DL_RESUME_LIST, (event) => {
+    let data;
+    try { data = JSON.parse(event.detail); } catch (_) { return; }
+    resumeJobs.clear();
+    (data && data.jobs || []).forEach((job) => {
+      if (!job) return;
+      const key = job.jobKey || String(job.filename || '').replace(/\.[^.]+$/, '');
+      if (key) resumeJobs.set(key, job);
+    });
+    refreshDownloadButtons();
+  }, true);
+
+  function requestResumeState() {
+    try {
+      document.dispatchEvent(new CustomEvent(DL_RESUME_QUERY, {
+        detail: JSON.stringify({ id: 'vi-resume-' + (++resumeSeq), pageUrl: location.href })
+      }));
+    } catch (_) {}
+  }
 
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('mousemove', onMouseMove, true);
@@ -874,7 +932,9 @@
     picked = null;
     scanMode = 'normal';
     updateScanModeUi();
+    // 进入探查后立即按最后鼠标位置给出高亮，和“审查元素”手感一致
     computeHover();
+    showAreaToast(t('badgeInspecting'));
   }
 
   function stopInspect() {
@@ -1031,7 +1091,30 @@
 
     const hit = hitTest(document, event.clientX, event.clientY);
     if (!hit) return;
-    picked = hit.el;
+    // 命中元素内确实有视频才打开模态框；没有就留在探查模式继续点
+    const lookup = (node) => {
+      let list = cache.get(node);
+      if (!list) {
+        list = collectVideos(node, 0, 0, 0);
+        cache.set(node, list);
+      }
+      return list;
+    };
+    let target = hit.el;
+    let videos = lookup(target);
+    // 点到封面/浮层等子元素时，最多向上找 4 层，找到含视频的容器为止
+    for (let i = 0; !videos.length && i < 4 && target.parentElement; i++) {
+      target = target.parentElement;
+      videos = lookup(target);
+    }
+    if (!videos.length) {
+      mouse = { x: event.clientX, y: event.clientY };
+      hovered = { ...hit, videos, label: describe(hit.el) };
+      renderHover();
+      showAreaToast(t('inspectEmpty'));
+      return;
+    }
+    picked = target;
     stopInspect();
     openModal(picked);
   }
@@ -1072,7 +1155,12 @@
       event.preventDefault();
       event.stopPropagation();
       if (areaMode) stopAreaMode();
-      else startAreaMode();
+      if (active) {
+        stopInspect();
+        return;
+      }
+      if (!modal.hidden) closeModal();
+      startInspect();
       return;
     }
     if (areaMode) {
@@ -1170,6 +1258,7 @@
 
     requestCapturedResources();
     requestQualities();
+    requestResumeState();
     if (deepScanTimer) clearTimeout(deepScanTimer);
     if (capturePollTimer) clearInterval(capturePollTimer);
     deepScanTimer = setTimeout(requestCapturedResources, 2500);
@@ -1794,6 +1883,20 @@
     return base + '.' + ext;
   }
 
+  // 断点续传的稳定标识：只用 origin+pathname，避免签名参数变化导致对不上任务
+  function jobKeyOf(item) {
+    const raw = (item && (item.src || (item.el && item.el.currentSrc))) || '';
+    try {
+      const u = new URL(raw, location.href);
+      if (/^https?:$/.test(u.protocol)) return u.origin + u.pathname;
+    } catch (_) {}
+    return '';
+  }
+
+  function resumeKeyOf(item) {
+    return jobKeyOf(item) || String(fileName(item)).replace(/\.[^.]+$/, '');
+  }
+
   function requestDownload(url, filename, onProgress, task, options) {
     const id = 'vi-' + (++downloadSeq);
     if (task) task.id = id;
@@ -1836,7 +1939,7 @@
         let data;
         try { data = JSON.parse(event.detail); } catch (_) { return; }
         if (!data || data.id !== id) return;
-        if (onProgress && typeof data.percent === 'number') onProgress(data.percent, data.phase);
+        if (onProgress && typeof data.percent === 'number') onProgress(data.percent, data.phase, data);
         if (data.phase === 'verifying') clearTimeout(stallTimer);
         else resetStallTimer();
       };
@@ -1855,6 +1958,7 @@
         if (options.videoUrl) detail.videoUrl = options.videoUrl;
         if (options.audioUrl) detail.audioUrl = options.audioUrl;
         if (options.pageUrl) detail.pageUrl = options.pageUrl;
+        if (options.jobKey) detail.jobKey = options.jobKey;
         if (qualitySelect && qualitySelect.value) detail.qualityId = qualitySelect.value;
         document.dispatchEvent(new CustomEvent(DL_REQUEST, { detail: JSON.stringify(detail) }));
       } catch (_) {
@@ -1863,35 +1967,174 @@
     });
   }
 
-  function startDownload(item) {
-    if (!item) return null;
-    const key = itemKey(item);
-    let task = downloadTasks.get(key);
-    if (task && task.phase === 'downloading') return task;
+  // ===== 下载队列：最多 2 个并发，其余排队，批量下载有整体状态 =====
+  const MAX_CONCURRENT_DOWNLOADS = 2;
+  const downloadQueue = [];
+  const resumeJobs = new Map();
+  let refreshTimer = 0;
 
-    task = { cancelled: false, id: null, phase: 'downloading', item, phaseText: 'resolving', lastError: '' };
-    downloadTasks.set(key, task);
-    refreshDownloadButtons();
-
-    downloadItem(item, (_percent, phase) => {
-      if (phase && task.phaseText !== phase) {
-        task.phaseText = phase;
-        refreshDownloadButtons();
-      }
-    }, task).then((ok) => {
-      task.phase = ok ? 'done' : (task.cancelled ? 'cancelled' : 'failed');
-      task.phaseText = '';
+  function scheduleRefresh() {
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = 0;
       refreshDownloadButtons();
+    }, 200);
+  }
+
+  function activeDownloadCount() {
+    let count = 0;
+    downloadTasks.forEach((t) => { if (t.phase === 'downloading') count++; });
+    return count;
+  }
+
+  function runTask(task) {
+    if (!task || task.cancelled) return;
+    task.phase = 'downloading';
+    refreshDownloadButtons();
+    downloadItem(task.item, (percent, phase, data) => {
+      if (typeof percent === 'number') task.percent = percent;
+      if (data) {
+        if (typeof data.loaded === 'number') task.loaded = data.loaded;
+        if (typeof data.total === 'number' && data.total > 0) task.total = data.total;
+      }
+      if (phase && task.phaseText !== phase) task.phaseText = phase;
+      scheduleRefresh();
+    }, task).then((ok) => {
+      task.phase = ok ? 'done' : (task.cancelled ? 'paused' : 'failed');
+      task.phaseText = '';
+      if (task.phase === 'done') {
+        task.percent = 100;
+        resumeJobs.delete(resumeKeyOf(task.item));
+      }
+      refreshDownloadButtons();
+      pumpQueue();
     }).catch(() => {
       task.phase = 'failed';
       task.phaseText = '';
       refreshDownloadButtons();
+      pumpQueue();
     });
+  }
+
+  function pumpQueue() {
+    while (downloadQueue.length && activeDownloadCount() < MAX_CONCURRENT_DOWNLOADS) {
+      const next = downloadQueue.shift();
+      if (!next || next.cancelled) continue;
+      runTask(next);
+    }
+  }
+
+  function startDownload(item) {
+    if (!item) return null;
+    const key = itemKey(item);
+    const prev = downloadTasks.get(key);
+    if (prev && (prev.phase === 'downloading' || prev.phase === 'queued')) return prev;
+
+    const baseName = String(fileName(item)).replace(/\.[^.]+$/, '');
+    const job = resumeJobs.get(jobKeyOf(item) || baseName);
+    const startPercent = (prev && prev.phase === 'paused' && prev.percent) || (job ? job.percent : 0);
+    const task = {
+      cancelled: false,
+      id: null,
+      phase: 'queued',
+      item,
+      phaseText: '',
+      lastError: '',
+      percent: startPercent,
+      loaded: (prev && prev.phase === 'paused' && prev.loaded) || (job ? job.size || 0 : 0),
+      total: (prev && prev.phase === 'paused' && prev.total) || 0
+    };
+    downloadTasks.set(key, task);
+    downloadQueue.push(task);
+    refreshDownloadButtons();
+    pumpQueue();
     return task;
   }
 
+  function pauseAllDownloads() {
+    downloadTasks.forEach((task) => {
+      if (task.phase === 'downloading') {
+        task.cancelled = true;
+        task.phase = 'paused';
+        if (task.id) {
+          try { document.dispatchEvent(new CustomEvent(DL_CANCEL, { detail: JSON.stringify({ id: task.id }) })); } catch (_) {}
+        }
+      } else if (task.phase === 'queued') {
+        task.cancelled = true;
+        task.phase = 'paused';
+      }
+    });
+    pumpQueue();
+    refreshDownloadButtons();
+  }
+
+  function retryFailedDownloads() {
+    const retry = [];
+    downloadTasks.forEach((task) => {
+      if (task.phase === 'failed') retry.push(task);
+    });
+    retry.forEach((task) => {
+      task.cancelled = false;
+      task.phase = 'queued';
+      task.lastError = '';
+      task.phaseText = '';
+      downloadQueue.push(task);
+    });
+    pumpQueue();
+    refreshDownloadButtons();
+  }
+
+  function clearFinishedDownloads() {
+    downloadTasks.forEach((task, key) => {
+      if (task.phase === 'done') downloadTasks.delete(key);
+    });
+    refreshDownloadButtons();
+  }
+
+  function renderDownloadSummary() {
+    const bar = shadow.querySelector('.vi-dlbar');
+    if (!bar) return;
+    const tasks = Array.from(downloadTasks.values());
+    if (!tasks.length) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    const counts = { done: 0, failed: 0, active: 0, queued: 0, paused: 0 };
+    let loaded = 0;
+    let total = 0;
+    tasks.forEach((task) => {
+      if (task.phase === 'done') counts.done++;
+      else if (task.phase === 'failed') counts.failed++;
+      else if (task.phase === 'queued') counts.queued++;
+      else if (task.phase === 'paused') counts.paused++;
+      else counts.active++;
+      loaded += task.loaded || 0;
+      total += task.total || 0;
+    });
+    // 暂停中的任务也计入“未完成”，进度条按字节优先、否则按完成条数
+    const percent = total > 0
+      ? Math.round((loaded / total) * 100)
+      : Math.round((counts.done / tasks.length) * 100);
+    const fill = bar.querySelector('.vi-dlbar-fill');
+    if (fill) fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+    const text = bar.querySelector('.vi-dlbar-text');
+    if (text) {
+      text.textContent = t('dlStats', {
+        done: counts.done,
+        total: tasks.length,
+        active: counts.active,
+        queued: counts.queued,
+        failed: counts.failed
+      }) + (counts.paused ? ' · ' + t('pausedCount', { count: counts.paused }) : '');
+    }
+  }
+
   function refreshDownloadButtons() {
-    if (!currentItems || !currentItems.length) return;
+    if (!currentItems || !currentItems.length) {
+      renderDownloadSummary();
+      return;
+    }
     currentItems.forEach((item) => {
       const task = downloadTasks.get(itemKey(item));
       const card = shadow.querySelector('.vi-card[data-index="' + item.index + '"]');
@@ -1902,13 +2145,22 @@
           const phaseKey = task.phaseText === 'merging' ? 'phaseMerging'
             : task.phaseText === 'verifying' ? 'phaseVerifying'
             : task.phaseText === 'resolving' ? 'phaseResolving' : null;
-          setButtonLoading(button, true, phaseKey ? t(phaseKey) : t('downloading'));
+          const label = phaseKey
+            ? t(phaseKey)
+            : t('downloading') + (task.percent ? ' ' + task.percent + '%' : '');
+          setButtonLoading(button, true, label);
         } else {
           setButtonLoading(button, false);
           if (task && task.phase === 'done') button.textContent = t('downloadDone');
-          if (task && (task.phase === 'failed' || task.phase === 'cancelled')) {
+          else if (task && task.phase === 'queued') button.textContent = t('queuedText');
+          else if (task && task.phase === 'paused') {
+            button.textContent = t('resumeText', { percent: task.percent || 0 });
+          } else if (task && task.phase === 'failed') {
             button.textContent = t('downloadFailed');
             button.title = task.lastError || '';
+          } else if (!task) {
+            const job = resumeJobs.get(resumeKeyOf(item));
+            button.textContent = job ? t('resumeText', { percent: job.percent }) : t('download');
           }
         }
       }
@@ -1921,6 +2173,7 @@
       if (active > 0) setButtonLoading(allButton, true, t('downloading'));
       else setButtonLoading(allButton, false);
     }
+    renderDownloadSummary();
   }
 
   function downloadCapturedResource(item, task, forceExt) {
@@ -2034,7 +2287,8 @@
           kind: candidate.kind || '',
           videoUrl: candidate.videoUrl || '',
           audioUrl: candidate.audioUrl || '',
-          pageUrl: candidate.pageUrl || location.href
+          pageUrl: candidate.pageUrl || location.href,
+          jobKey: jobKeyOf(item)
         });
       }
       if (task && task.cancelled) return false;
@@ -2068,6 +2322,12 @@
     else if (action === 'refresh' || action === 'search') runSearch();
     else if (action === 'download-all') {
       currentItems.filter((item) => item.selected).forEach((item) => startDownload(item));
+    } else if (action === 'dl-pause') {
+      pauseAllDownloads();
+    } else if (action === 'dl-retry') {
+      retryFailedDownloads();
+    } else if (action === 'dl-clear') {
+      clearFinishedDownloads();
     } else if (action === 'download') {
       const item = currentItems[index];
       if (item) startDownload(item);

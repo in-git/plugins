@@ -73,15 +73,28 @@
     const chunks = [];
     let loaded = 0, total = 0, pos = 0, first = true;
     let contentType = '', etag = '';
+    // 部分 CDN（如 TikTok 音乐 obj 域名）只接受带 Range 的请求，裸 GET 会被直接断连
+    const forceRange = !!(meta && meta.forceRange);
+    // 断点续传：从已落盘的字节位置继续，并用 If-Range 校验内容未变
+    const resume = meta && meta.resume;
+    const onChunk = meta && typeof meta.onChunk === 'function' ? meta.onChunk : null;
+    if (resume && resume.loaded > 0) {
+      pos = resume.loaded;
+      loaded = resume.loaded;
+      total = resume.total || 0;
+      etag = resume.etag || '';
+      contentType = resume.contentType || '';
+      first = false;
+    }
     for (;;) {
       if (signal.aborted) throw new Error('cancelled');
       const headers = {};
       if (extraHeaders) {
         for (const k in extraHeaders) headers[k] = extraHeaders[k];
       }
-      if (!first) {
+      if (!first || forceRange) {
         headers.Range = 'bytes=' + pos + '-';
-        if (etag) headers['If-Range'] = etag;
+        if (!first && etag) headers['If-Range'] = etag;
       }
       const response = await fetch(url, withMeta(meta, { credentials: (meta && meta.credentials) || 'omit', signal, headers, [INTERNAL]: true }));
       if (!response.ok && response.status !== 206) throw new Error('HTTP ' + response.status);
@@ -90,8 +103,12 @@
         contentType = response.headers.get('content-type') || '';
         etag = response.headers.get('etag') || '';
         total = (range && range.total) || Number(response.headers.get('content-length')) || 0;
-      } else if (response.status !== 206 || !range || range.start !== pos) {
-        throw new Error('unexpected range response');
+        if (meta && typeof meta.onMeta === 'function') meta.onMeta({ etag, contentType, total });
+      } else {
+        // 续传时服务器回 200 说明不支持 Range，或内容已变化（If-Range 失效）
+        if (response.status === 200) throw new Error('resume unsupported');
+        if (response.status !== 206 || !range || range.start !== pos) throw new Error('unexpected range response');
+        if (!total) total = range.total || 0;
       }
       if (response.body && typeof response.body.getReader === 'function') {
         const reader = response.body.getReader();
@@ -102,6 +119,7 @@
           if (value && value.byteLength) {
             chunks.push(value);
             loaded += value.byteLength;
+            if (onChunk) onChunk(value, loaded, total);
             onProgress(loaded, total);
           }
         }
@@ -109,6 +127,7 @@
         const buf = await response.arrayBuffer();
         chunks.push(buf);
         loaded += buf.byteLength;
+        if (onChunk) onChunk(new Uint8Array(buf), loaded, total);
         onProgress(loaded, total);
       }
       if (first && response.status === 200) break;
@@ -123,7 +142,7 @@
     else if (/\.ogv(\?|#|$)/i.test(url)) ext = 'ogv';
     else if (/\.mov(\?|#|$)/i.test(url)) ext = 'mov';
     else if (/\.mkv(\?|#|$)/i.test(url)) ext = 'mkv';
-    return { tracks: [new Blob(chunks, { type: contentType || 'video/mp4' })], contentType, ext };
+    return { tracks: [new Blob(chunks, { type: contentType || 'video/mp4' })], contentType, ext, etag, loaded, total };
   }
 
   function parseAttrs(line) {
@@ -529,21 +548,58 @@
     return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
   }
 
-  // 解析单个轨道的样本列表（用 MP4Box 提取）
+  // 解析单个轨道的全部样本（用 MP4Box 提取），必须等样本数到齐才返回
   function extractTrackSamples(file, trackId) {
     return new Promise((resolve, reject) => {
+      const trak = file.getTrackById(trackId);
+      const total = trak && trak.samples ? trak.samples.length : 0;
       const samples = [];
-      let received = 0;
-      let total = 0;
-      file.onSamples = (id, user, s) => {
-        s.forEach((sample) => samples.push(sample));
-        received += s.length;
-        if (total && received >= total) resolve(samples);
+      let settled = false;
+      let guard = null;
+      let watch = null;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        if (guard) clearTimeout(guard);
+        if (watch) clearInterval(watch);
+        if (err) reject(err); else resolve(samples);
       };
-      file.setExtractionOptions(trackId, null, { nbSamples: 1000 });
+      if (!total) { finish(); return; }
+      file.onSamples = (id, user, s) => {
+        for (const sample of s) samples.push(sample);
+        if (samples.length >= total) finish();
+      };
+      file.setExtractionOptions(trackId, null, { nbSamples: Math.min(total, 1000) });
       file.start();
-      // 兜底：等待一个 tick 后 resolve 已收到的样本
-      setTimeout(() => resolve(samples), 1500);
+      watch = setInterval(() => { if (samples.length >= total) finish(); }, 100);
+      guard = setTimeout(() => {
+        finish(samples.length >= total ? null : new Error('sample extraction incomplete ' + samples.length + '/' + total));
+      }, 30000);
+    });
+  }
+
+  // 解析 MP4 文件头，返回 { file, info }
+  function parseMp4File(buffer) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let guard = null;
+      const done = (err, value) => {
+        if (settled) return;
+        settled = true;
+        if (guard) clearTimeout(guard);
+        if (err) reject(err); else resolve(value);
+      };
+      guard = setTimeout(() => done(new Error('mp4 parse timeout')), 8000);
+      try {
+        const file = window.MP4Box.createFile();
+        file.onError = (e) => done(new Error('mp4 parse error: ' + ((e && e.message) || '')));
+        file.onReady = (info) => done(null, { file, info });
+        const buf = buffer.slice(0);
+        buf.fileStart = 0;
+        file.appendBuffer(buf);
+      } catch (e) {
+        done(e);
+      }
     });
   }
 
@@ -604,106 +660,115 @@
     });
   }
 
-  // DASH 双轨合流（MP4Box.js）：把视频轨(0)与音频轨(1)重封装成单一 MP4
+  // 取 stsd 里的第一个 sample entry（含 avcC / esds 解码配置），直接复用避免重建
+  function firstSampleEntry(trak) {
+    const stsd = trak && trak.mdia && trak.mdia.minf && trak.mdia.minf.stbl && trak.mdia.minf.stbl.stsd;
+    return stsd && stsd.entries ? stsd.entries[0] : null;
+  }
+
+  // 双轨合流（MP4Box.js）：把视频轨与音频轨重封装成一条同时含 video+audio 的 fMP4。
+  // 关键点：
+  //   1. 两条轨必须用不同的 track_id，否则 getTrackById 永远命中的是视频轨，音轨不会被写出；
+  //   2. addSample 必须传 sample.data + sample 元数据，否则样本 size/dts 全错；
+  //   3. 初始化段要一次包含两条轨（mp4box 自带的 initializeSegmentation 是按轨拆分的）。
   async function mergeStreams(buffers, onProgress) {
     if (!buffers || buffers.length < 2) return new Blob([buffers[0]], { type: 'video/mp4' });
     if (typeof window.MP4Box === 'undefined') throw new Error('mp4box unavailable');
+    const ISO = window.ISOFile;
+    const BoxParserRef = window.BoxParser;
+    if (!ISO || !BoxParserRef) throw new Error('mp4box internals unavailable');
 
     const videoBuf = toArrayBuffer(buffers[0]);
     const audioBuf = toArrayBuffer(buffers[1]);
-    videoBuf.fileStart = 0;
 
     // 关键：如果视频文件本身已带音轨，绝不能再加一条音频轨，否则会产生
     // 1 视频 + 2 音频的非法 MP4，Windows 报「不受支持的编码设置」(0xC00D36E5)。
-    const bin = probeTracksBinary(videoBuf);
-    if (bin.hasAudio) {
+    if (probeTracksBinary(videoBuf).hasAudio) {
       return new Blob([videoBuf], { type: 'video/mp4' });
     }
 
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      // 兜底超时：MP4Box 解析 MP3 等非 MP4 容器时 onReady 不会触发，避免永久挂起。
-      const guard = setTimeout(() => {
-        if (!settled) { settled = true; reject(new Error('merge timeout')); }
-      }, 20000);
-      const fail = (e) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(guard);
-        reject(e);
-      };
-      const succeed = (blob) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(guard);
-        resolve(blob);
-      };
+    const videoSource = await parseMp4File(videoBuf);
+    const audioSource = await parseMp4File(audioBuf);
+    const vInfo = (videoSource.info.videoTracks || [])[0] || videoSource.info.tracks[0];
+    const aInfo = (audioSource.info.audioTracks || [])[0];
+    if (!vInfo) throw new Error('video track missing');
+    if (!aInfo) throw new Error('audio track missing in audio stream');
 
-      // 解析视频文件拿轨道信息
-      const videoFile = window.MP4Box.createFile();
-      videoFile.onError = (e) => fail(new Error('mp4box video: ' + (e && e.message || e)));
-      videoFile.onReady = (videoInfo) => {
-        try {
-          // 解析音频文件拿音频轨道
-          const audioFile = window.MP4Box.createFile();
-          audioFile.onError = (e) => fail(new Error('mp4box audio: ' + (e && e.message || e)));
-          audioFile.onReady = async (audioInfo) => {
-            try {
-              // 提取音频样本
-              const audioTrack = audioInfo.tracks[0];
-              const samples = await extractTrackSamples(audioFile, audioTrack.id);
+    const vSrcTrak = videoSource.file.getTrackById(vInfo.id);
+    const aSrcTrak = audioSource.file.getTrackById(aInfo.id);
 
-              // 输出文件：先加视频轨道
-              const outFile = window.MP4Box.createFile();
-              const outChunks = [];
-              outFile.onError = (e) => fail(new Error('mp4box out: ' + (e && e.message || e)));
-              outFile.onReady = (outInfo) => {
-                try {
-                  // 添加音频轨道
-                  const newAudioTrack = outFile.addTrack(audioTrack);
-                  samples.forEach((sample) => {
-                    sample.track_id = newAudioTrack.id;
-                    outFile.addSample(newAudioTrack.id, sample);
-                  });
-                  outFile.flush();
+    // 先抽样本，两路都拿全后再开始写输出
+    const vSamples = await extractTrackSamples(videoSource.file, vInfo.id);
+    const aSamples = await extractTrackSamples(audioSource.file, aInfo.id);
+    if (!vSamples.length) throw new Error('no video samples');
+    if (!aSamples.length) throw new Error('no audio samples');
 
-                  outInfo.tracks.forEach((t) => {
-                    outFile.setSegmentOptions(t.id, t, { nbSamples: 4096, rapAlignement: true });
-                  });
-                  const initSegs = outFile.initializeSegmentation();
-                  initSegs.forEach((s) => outChunks.push(s.buffer));
-                  outFile.onSegment = (id, user, buffer) => {
-                    outChunks.push(buffer);
-                    if (onProgress) onProgress(outChunks.length);
-                  };
-                  outFile.start();
-                  outFile.flush();
-
-                  const total = outChunks.reduce((s, b) => s + b.byteLength, 0);
-                  const joined = new Uint8Array(total);
-                  let off = 0;
-                  outChunks.forEach((b) => { joined.set(new Uint8Array(b), off); off += b.byteLength; });
-                  succeed(new Blob([joined.buffer], { type: 'video/mp4' }));
-                } catch (e) { fail(e); }
-              };
-
-              // 把视频样本喂给输出文件
-              const videoSamples = await extractTrackSamples(videoFile, videoInfo.tracks[0].id);
-              videoSamples.forEach((sample) => {
-                outFile.addSample(videoInfo.tracks[0].id, sample);
-              });
-              outFile.appendBuffer(videoBuf, 0);
-              outFile.flush();
-            } catch (e) { fail(e); }
-          };
-          audioFile.appendBuffer(audioBuf, 0);
-          audioFile.flush();
-        } catch (e) { fail(e); }
-      };
-
-      videoFile.appendBuffer(videoBuf, 0);
-      videoFile.flush();
+    const outFile = window.MP4Box.createFile();
+    // 注意：mp4box 的 addTrack 返回的是 track_id（不是 trak box），要再用 getTrackById 取
+    const vTrackId = outFile.addTrack({
+      id: 1,
+      type: String(vInfo.codec || 'avc1').split('.')[0] || 'avc1',
+      hdlr: 'vide',
+      name: vInfo.name || 'VideoHandler',
+      timescale: vInfo.timescale || 90000,
+      width: (vInfo.video && vInfo.video.width) || Math.round(vInfo.track_width || 0) || 320,
+      height: (vInfo.video && vInfo.video.height) || Math.round(vInfo.track_height || 0) || 240,
+      language: vInfo.language || 'und'
     });
+    const aTrackId = outFile.addTrack({
+      id: 2,
+      type: String(aInfo.codec || 'mp4a').split('.')[0] || 'mp4a',
+      hdlr: 'soun',
+      name: aInfo.name || 'SoundHandler',
+      timescale: aInfo.timescale || 44100,
+      language: aInfo.language || 'und'
+    });
+    const vOut = outFile.getTrackById(vTrackId);
+    const aOut = outFile.getTrackById(aTrackId);
+    if (!vOut || !aOut) throw new Error('create output track failed');
+    const vEntry = firstSampleEntry(vSrcTrak);
+    const aEntry = firstSampleEntry(aSrcTrak);
+    if (vEntry) vOut.mdia.minf.stbl.stsd.entries[0] = vEntry;
+    if (aEntry) aOut.mdia.minf.stbl.stsd.entries[0] = aEntry;
+    outFile.moov.traks = [vOut, aOut];
+
+    outFile.setSegmentOptions(vTrackId, null, { nbSamples: 1000 });
+    outFile.setSegmentOptions(aTrackId, null, { nbSamples: 1000 });
+
+    const chunks = [];
+    outFile.onSegment = (id, user, buffer) => {
+      chunks.push(buffer);
+      if (onProgress) onProgress(chunks.length);
+    };
+
+    // 初始化分段：一次写入 video+audio 两条轨（等价于 mp4box 内部 writeInitializationSegment）
+    outFile.isFragmentationInitialized = true;
+    outFile.nextMoofNumber = 0;
+    outFile.resetTables();
+    const movieTimescale = outFile.moov.mvhd.timescale || 600;
+    const videoSeconds = vInfo.duration && vInfo.timescale ? vInfo.duration / vInfo.timescale : 0;
+    const movieDuration = Math.round(videoSeconds * movieTimescale);
+    outFile.moov.mvhd.duration = movieDuration;
+    const moov = new BoxParserRef.moovBox();
+    moov.mvhd = outFile.moov.mvhd;
+    moov.boxes.push(moov.mvhd, vOut, aOut);
+    moov.traks = [vOut, aOut];
+    const initBuffer = ISO.writeInitializationSegment(outFile.ftyp, moov, movieDuration, 0);
+
+    outFile.start();
+    for (const sample of vSamples) outFile.addSample(vTrackId, sample.data, sample);
+    for (const sample of aSamples) outFile.addSample(aTrackId, sample.data, sample);
+
+    const parts = [initBuffer].concat(chunks);
+    const total = parts.reduce((sum, part) => sum + (part.byteLength || part.size || 0), 0);
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      const view = part instanceof Uint8Array ? part : new Uint8Array(part);
+      merged.set(view, offset);
+      offset += view.byteLength;
+    }
+    return new Blob([merged.buffer], { type: 'video/mp4' });
   }
 
   // B站清晰度 id → 名称
@@ -1279,12 +1344,26 @@
         try {
           const probe = await fetch(cand.url, withMeta(workMeta, {
             credentials: cred,
-            headers: Object.assign({ Range: 'bytes=0-4095' }, workMeta.headers || {})
+            headers: Object.assign({ Range: 'bytes=0-196607' }, workMeta.headers || {})
           }));
           if (!probe.ok && probe.status !== 206) continue;
           const type = probe.headers.get('content-type') || '';
           if (/json|text\/html/i.test(type)) continue;
-          // 有音轨就一律走双流；downloadAddr 实测也可能是纯视频，不能再当合一文件直接下载。
+          // 先看候选文件本身是否已带音轨：TikTok 的 playAddr/downloadAddr 有一部分是音视频合一的，
+          // 这种情况直接单文件下载，既不用拼“背景音乐”，也不会受音乐 CDN 断连影响。
+          const bin = probeTracksBinary(await probe.arrayBuffer());
+          if (bin.hasAudio) {
+            console.log('[VI-AUDIO] tiktok muxed source', { codec: cand.codec, audioTracks: bin.audioTracks });
+            return {
+              videoUrl: cand.url,
+              audioUrl: '',
+              kind: 'direct',
+              headers,
+              userAgent: TIKTOK_UA,
+              credentials: cred
+            };
+          }
+          // 纯视频轨：走双流；downloadAddr 实测也可能是纯视频，不能再当合一文件直接下载。
           // 只有确实没有音轨候选时，才退回单文件。
           if (usableAudioUrl) {
             console.log('[VI-AUDIO] tiktok using video+audio streams', { codec: cand.codec, audio: usableAudioUrl.slice(0, 120) });
