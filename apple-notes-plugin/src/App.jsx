@@ -425,7 +425,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="mt-2.5 flex h-9 items-center gap-1.5 rounded-[10px] border border-hairline bg-canvas px-2.5 transition-shadow focus-within:ring-2 focus-within:ring-ink/10">
+          <div className="mt-2.5 flex h-9 items-center gap-1.5 rounded-[8px] border border-hairline bg-canvas px-2.5 transition-shadow focus-within:ring-2 focus-within:ring-accent/20">
             <span className="shrink-0 text-muted">
               <Icon name="search" size={15} />
             </span>
@@ -451,7 +451,7 @@ export default function App() {
 
         <div
           id="tree"
-          className="nb-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-4"
+          className="nb-scroll min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-2"
           onContextMenu={(e) => {
             if (e.target.closest('.tree-item')) return;
             e.preventDefault();

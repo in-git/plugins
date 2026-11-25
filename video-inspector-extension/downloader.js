@@ -663,19 +663,25 @@
       return true;
     };
     // 诊断用：把攒到的 MSE 音视频分流送进 offscreen ffmpeg 合并，直接下载 MP4
-    window.__viMseMuxTest = async function (customFilename, forcedMuxId) {
-      // 关键：按创建时间取最近的一组，不能按大小取（同页面连续播 A、B 时会取到 A 的旧分片）。
-      // id 形如 'mse-<序号>-<时间戳>'，用末段时间戳排序；无时间戳时退回序号。
+    window.__viMseMuxTest = async function (customFilename, forcedMuxId, matchUrl) {
+      // 关键：按视频的 blob URL（matchUrl）精确匹配分片，A/B 两个视频同时存在时不会串台。
+      // 控制台直接调用时没传 matchUrl，退回“最近创建的一组”保持原诊断行为。
       const createdAt = (entry) => {
         const parts = String(entry && entry.id || '').split('-');
         const n = Number(parts[parts.length - 1]);
         return Number.isFinite(n) ? n : 0;
       };
-      const a = vault.filter((x) => x && x.source === 'mse-audio' && x.blob && x.blob.size > 1024)
-        .sort((x, y) => createdAt(y) - createdAt(x))[0];
-      const v = vault.filter((x) => x && x.source === 'mse-video' && x.blob && x.blob.size > 1024)
-        .sort((x, y) => createdAt(y) - createdAt(x))[0];
-      if (!a || !v) { console.warn('[VI-MSE-DIAG] need both audio+video MSE blobs', !!a, !!v); return false; }
+      const pick = (source) => {
+        let list = vault.filter((x) => x && x.source === source && x.blob && x.blob.size > 1024);
+        if (matchUrl) {
+          const matched = list.filter((x) => x.matchUrl === matchUrl);
+          if (matched.length) list = matched;
+        }
+        return list.sort((x, y) => createdAt(y) - createdAt(x))[0];
+      };
+      const a = pick('mse-audio');
+      const v = pick('mse-video');
+      if (!a || !v) { console.warn('[VI-MSE-DIAG] need both audio+video MSE blobs', !!a, !!v, 'matchUrl', matchUrl); return false; }
       const base = String(customFilename || 'youtube-mse-mux').replace(/\.[^.]+$/, '').slice(0, 80) || 'youtube-mse-mux';
       const fname = base + '-' + Date.now() + '.mp4';
       console.log('[VI-MSE-DIAG] mux(ffmpeg offscreen) start', { audio: a.blob.size, video: v.blob.size, at: a.type, vt: v.type, file: fname, aid: a.id, vid: v.id });
@@ -703,7 +709,7 @@
       return;
     }
     try {
-      const ok = await window.__viMseMuxTest(detail.filename, id);
+      const ok = await window.__viMseMuxTest(detail.filename, id, detail.matchUrl);
       fire(MSE_DIRECT_RESPONSE, { id, ok: !!ok, downloaded: !!ok });
     } catch (e) {
       fire(MSE_DIRECT_RESPONSE, { id, ok: false, error: String(e && e.message || e) });

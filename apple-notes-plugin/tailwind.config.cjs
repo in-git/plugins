@@ -11,11 +11,12 @@ module.exports = {
         muted: 'rgb(var(--muted) / <alpha-value>)',
         accent: {
           DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
-          press: 'rgb(var(--accent-press) / <alpha-value>)'
+          press: 'rgb(var(--accent-press) / <alpha-value>)',
+          soft: 'rgb(var(--accent-soft) / <alpha-value>)'
         },
         accentink: 'rgb(var(--accent-ink) / <alpha-value>)',
         danger: 'rgb(var(--danger) / <alpha-value>)',
-        hairline: 'rgb(var(--line) / 0.08)'
+        hairline: 'rgb(var(--line) / 0.1)'
       },
       fontFamily: {
         sans: [

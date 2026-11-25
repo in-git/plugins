@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.19.23';
+  const EXT_VERSION = '1.19.24';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -2225,7 +2225,7 @@
 
   // 独立 MSE 直连：所有常规候选都失败后，用页面缓存的 MSE 音视频分片合并下载。
   // 走专用事件通道，完全独立于 REQUEST / resolvePlatform，与 __viMseMuxTest 同源。
-  function requestMseDirectMux(filename, onProgress) {
+  function requestMseDirectMux(filename, onProgress, matchUrl) {
     const id = 'msedirect-' + (++downloadSeq);
     return new Promise((resolve) => {
       let settled = false;
@@ -2247,7 +2247,7 @@
       timer = setTimeout(() => finish({ ok: false, error: 'MSE 直连合并超时' }), 4 * 60 * 1000);
       try {
         document.dispatchEvent(new CustomEvent(MSE_DIRECT_REQUEST, {
-          detail: JSON.stringify({ id, filename })
+          detail: JSON.stringify({ id, filename, matchUrl })
         }));
       } catch (_) {
         finish({ ok: false, error: 'MSE 直连派发失败' });
@@ -2698,7 +2698,7 @@
     // 优先触发 __viMseMuxTest()：与控制台命令完全相同的 MSE 合并下载链路。
     // 没有缓存的 MSE 音视频分片时会快速返回 false，继续走下面的常规候选。
     if (!task || !task.cancelled) {
-      const mseResult = await requestMseDirectMux(filename, onProgress);
+      const mseResult = await requestMseDirectMux(filename, onProgress, item.src);
       if (mseResult && mseResult.ok) return true;
     }
 

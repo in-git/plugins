@@ -2,33 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ---------- 黑白主题令牌 ---------- */
+/* ---------- 主题令牌（参考飞书式白 + 浅灰 + 蓝强调） ---------- */
 :root {
   color-scheme: light;
   --canvas: 255 255 255;
-  --panel: 246 246 247;
-  --ink: 29 29 31;
-  --subtle: 134 134 139;
-  --muted: 184 184 189;
-  --line: 0 0 0;
-  --accent: 29 29 31;
-  --accent-press: 0 0 0;
+  --panel: 247 248 250;
+  --ink: 31 35 41;
+  --subtle: 100 106 115;
+  --muted: 143 149 158;
+  --line: 31 35 41;
+  --accent: 51 112 255;
+  --accent-press: 36 91 219;
   --accent-ink: 255 255 255;
-  --danger: 199 54 47;
+  --accent-soft: 237 242 254;
+  --danger: 245 74 69;
 }
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --canvas: 28 28 30;
-  --panel: 36 36 38;
-  --ink: 245 245 247;
-  --subtle: 152 152 157;
-  --muted: 110 110 115;
+  --canvas: 24 25 28;
+  --panel: 31 32 36;
+  --ink: 235 236 238;
+  --subtle: 154 158 166;
+  --muted: 105 110 118;
   --line: 255 255 255;
-  --accent: 245 245 247;
-  --accent-press: 226 226 230;
-  --accent-ink: 28 28 30;
-  --danger: 255 105 97;
+  --accent: 77 128 255;
+  --accent-press: 106 149 255;
+  --accent-ink: 255 255 255;
+  --accent-soft: 33 45 74;
+  --danger: 255 107 102;
 }
 
 @layer base {
@@ -49,7 +51,7 @@
   }
 
   ::selection {
-    background: rgb(var(--ink) / 0.14);
+    background: rgb(var(--accent) / 0.16);
   }
 
   .nb-scroll {
@@ -86,7 +88,7 @@
   .nb-btn {
     @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-control border border-hairline
       bg-canvas px-3 text-body font-medium text-ink transition-colors duration-150
-      hover:bg-ink/[0.04] active:bg-ink/[0.07]
+      hover:bg-panel active:bg-ink/[0.06]
       disabled:pointer-events-none disabled:opacity-40;
   }
 
@@ -105,7 +107,7 @@
   .nb-field {
     @apply h-9 w-full rounded-control border border-hairline bg-panel px-3 text-body text-ink
       placeholder:text-muted outline-none transition duration-150
-      focus:bg-canvas focus:ring-2 focus:ring-ink/10;
+      focus:bg-canvas focus:ring-2 focus:ring-accent/20;
   }
 
   /* ---------- 侧栏目录树 ---------- */
@@ -116,7 +118,12 @@
   }
 
   .tree-item.is-active {
-    @apply bg-ink/[0.07] font-medium text-ink;
+    @apply bg-accent-soft font-medium text-ink;
+  }
+
+  .tree-item.is-active::after {
+    content: '';
+    @apply pointer-events-none absolute bottom-2 left-0 top-2 w-[2px] rounded-full bg-accent;
   }
 
   /* 拖拽中的源行 */
@@ -127,7 +134,7 @@
   /* 排序插入指示线 */
   .tree-item::before {
     content: '';
-    @apply pointer-events-none absolute left-1 right-1 h-[2px] rounded-full bg-ink opacity-0
+    @apply pointer-events-none absolute left-1 right-1 h-[2px] rounded-full bg-accent opacity-0
       transition-opacity duration-75;
   }
 
@@ -141,8 +148,8 @@
 
   /* 拖入目录内部 */
   .tree-item.is-drop-inside {
-    @apply bg-ink/[0.10] text-ink;
-    box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.28);
+    @apply bg-accent-soft text-ink;
+    box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.45);
   }
 
   /* 跟随指针的拖影 */

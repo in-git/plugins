@@ -1,4 +1,4 @@
-/* AiEditor → Apple 黑白主题适配（必须在 aieditor/dist/style.css 之后加载） */
+/* AiEditor → 白 / 浅灰 / 蓝强调主题适配（必须在 aieditor/dist/style.css 之后加载） */
 
 html .aieditor,
 html [class*='aieditor'][data-theme='light'] {
@@ -15,9 +15,9 @@ html [class*='aieditor'][data-theme='light'] {
   --aieditor-divider-color: rgb(var(--line) / 0.08);
   --aieditor-hover: rgb(var(--ink) / 0.05);
   --aieditor-hover-strong: rgb(var(--ink) / 0.08);
-  --aieditor-accent: rgb(var(--ink));
-  --aieditor-accent-soft: rgb(var(--ink) / 0.07);
-  --aieditor-focus-ring: rgb(var(--ink) / 0.14);
+  --aieditor-accent: rgb(var(--accent));
+  --aieditor-accent-soft: rgb(var(--accent) / 0.08);
+  --aieditor-focus-ring: rgb(var(--accent) / 0.22);
   --aieditor-danger: rgb(var(--danger));
   --aieditor-danger-soft: rgb(var(--danger) / 0.1);
   --aieditor-code-bg: rgb(var(--panel));
@@ -48,7 +48,7 @@ html [class*='aieditor'][data-theme='light'] {
   --aieditor-document-blockquote-border-left: 2px solid rgb(var(--line) / 0.14);
   --aieditor-document-blockquote-padding: 0 0 0 16px;
   --aieditor-document-blockquote-font-style: normal;
-  --aieditor-document-link-color: rgb(var(--ink));
+  --aieditor-document-link-color: rgb(var(--accent));
   --aieditor-document-media-block-border-radius: 12px;
   --aieditor-document-media-inline-border-radius: 6px;
   --aieditor-document-table-border-color: rgb(var(--line) / 0.12);
@@ -75,9 +75,9 @@ html [class*='aieditor'][data-theme='dark'] {
   --aieditor-divider-color: rgb(var(--line) / 0.1);
   --aieditor-hover: rgb(var(--ink) / 0.07);
   --aieditor-hover-strong: rgb(var(--ink) / 0.11);
-  --aieditor-accent: rgb(var(--ink));
-  --aieditor-accent-soft: rgb(var(--ink) / 0.1);
-  --aieditor-focus-ring: rgb(var(--ink) / 0.18);
+  --aieditor-accent: rgb(var(--accent));
+  --aieditor-accent-soft: rgb(var(--accent) / 0.14);
+  --aieditor-focus-ring: rgb(var(--accent) / 0.3);
   --aieditor-danger: rgb(var(--danger));
   --aieditor-danger-soft: rgb(var(--danger) / 0.14);
   --aieditor-code-bg: rgb(var(--panel));
