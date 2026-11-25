@@ -94,6 +94,9 @@
     "resumeText": "继续 $percent$%",
     "dlStats": "已完成 $done$/$total$ · 下载中 $active$ · 排队 $queued$ · 失败 $failed$",
     "pausedCount": "已暂停 $count$",
+    "queueTitle": "下载队列",
+    "queueEmpty": "当前没有下载任务",
+    "queueItemFallback": "视频",
     "pauseAll": "暂停全部",
     "retryFailed": "重试失败",
     "clearDone": "清理已完成",
@@ -123,6 +126,7 @@
   let active = false;
   let rafId = 0;
   let mouse = { x: 0, y: 0 };
+  let lastContextTarget = null;
   let hovered = null;
   let picked = null;
   let scanMode = 'normal';
@@ -341,20 +345,99 @@
     background: #fff;
     border-bottom: 1px solid #f5f5f7;
   }
-  .vi-dlbar {
+  /* 下载队列：右下角悬浮按钮 + 点击展开任务面板 */
+  .vi-queue-fab {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 2147483647;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 44px;
+    padding: 0 16px;
+    border: none;
+    border-radius: 22px;
+    background: #1d1d1f;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .22);
+    transition: transform .15s, box-shadow .15s;
+  }
+  .vi-queue-fab[hidden] { display: none; }
+  .vi-queue-fab:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
+  .vi-queue-fab.active { background: #007aff; }
+  .vi-queue-fab-icon { font-size: 15px; line-height: 1; }
+  .vi-queue-fab-count {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .22);
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .vi-queue-panel {
+    position: fixed;
+    right: 24px;
+    bottom: 80px;
+    z-index: 2147483647;
+    width: 340px;
+    max-width: calc(100vw - 48px);
+    max-height: 62vh;
+    display: flex;
+    flex-direction: column;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, .24);
+    overflow: hidden;
+    font-size: 13px;
+    color: #1d1d1f;
+  }
+  .vi-queue-panel[hidden] { display: none; }
+  .vi-queue-head {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 10px 40px;
-    background: #f8f9fb;
-    border-bottom: 1px solid #eef0f3;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #f0f1f4;
   }
-  .vi-dlbar[hidden] { display: none; }
-  .vi-dlbar-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
-  .vi-dlbar-progress { flex: 0 0 160px; height: 6px; border-radius: 3px; background: #e6e8ec; overflow: hidden; }
-  .vi-dlbar-fill { display: block; height: 100%; width: 0; background: #007aff; transition: width .25s; }
-  .vi-dlbar-text { font-size: 12px; color: #6e6e73; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .vi-dlbar-actions { display: flex; gap: 8px; margin-left: auto; }
+  .vi-queue-head strong { font-size: 13px; }
+  .vi-queue-stats { flex: 1; min-width: 0; font-size: 12px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vi-queue-close {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #86868b;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .vi-queue-close:hover { background: #f2f2f5; color: #1d1d1f; }
+  .vi-queue-progress { height: 3px; background: #eceef2; }
+  .vi-queue-fill { display: block; height: 100%; width: 0; background: #007aff; transition: width .25s; }
+  .vi-queue-list { flex: 1; overflow: auto; padding: 6px 0; }
+  .vi-queue-empty { padding: 24px 0; text-align: center; color: #86868b; font-size: 12px; }
+  .vi-queue-item { padding: 8px 14px; }
+  .vi-queue-item + .vi-queue-item { border-top: 1px solid #f5f6f8; }
+  .vi-queue-item-top { display: flex; align-items: center; gap: 10px; }
+  .vi-queue-name { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vi-queue-state { flex: none; font-size: 11px; color: #6e6e73; }
+  .vi-queue-state.is-done { color: #1a9c52; }
+  .vi-queue-state.is-failed { color: #d70015; }
+  .vi-queue-state.is-active { color: #007aff; }
+  .vi-queue-item-bar { margin-top: 6px; height: 4px; border-radius: 2px; background: #eef0f3; overflow: hidden; }
+  .vi-queue-item-bar i { display: block; height: 100%; width: 0; background: #007aff; transition: width .25s; }
+  .vi-queue-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #f0f1f4; }
+  .vi-queue-actions .vi-btn { flex: 1; padding: 6px 0; font-size: 12px; }
   .vi-search-group, .vi-download-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .vi-download-group { margin-left: auto; }
   .vi-scan-mode {
@@ -730,17 +813,9 @@
       </div>
     </div>
 
-    <div class="vi-dlbar" hidden>
-      <div class="vi-dlbar-main">
-        <div class="vi-dlbar-progress"><span class="vi-dlbar-fill"></span></div>
-        <div class="vi-dlbar-text"></div>
-      </div>
-      <div class="vi-dlbar-actions">
-        <button class="vi-btn" type="button" data-action="dl-pause">${t('pauseAll')}</button>
-        <button class="vi-btn" type="button" data-action="dl-retry">${t('retryFailed')}</button>
-        <button class="vi-btn" type="button" data-action="dl-clear">${t('clearDone')}</button>
-      </div>
-    </div>
+
+
+
 
     <div class="vi-grid"></div>
 
@@ -752,6 +827,26 @@
       </button>
     </footer>
 
+  </div>
+</div>
+
+<button class="vi-queue-fab" type="button" data-action="queue-toggle" hidden aria-label="${t('queueTitle')}">
+  <span class="vi-queue-fab-icon">↓</span>
+  <span>${t('queueTitle')}</span>
+  <span class="vi-queue-fab-count">0</span>
+</button>
+<div class="vi-queue-panel" hidden>
+  <div class="vi-queue-head">
+    <strong>${t('queueTitle')}</strong>
+    <span class="vi-queue-stats"></span>
+    <button class="vi-queue-close" type="button" data-action="queue-close" aria-label="${t('close')}">×</button>
+  </div>
+  <div class="vi-queue-progress"><span class="vi-queue-fill"></span></div>
+  <div class="vi-queue-list"></div>
+  <div class="vi-queue-actions">
+    <button class="vi-btn" type="button" data-action="dl-pause">${t('pauseAll')}</button>
+    <button class="vi-btn" type="button" data-action="dl-retry">${t('retryFailed')}</button>
+    <button class="vi-btn" type="button" data-action="dl-clear">${t('clearDone')}</button>
   </div>
 </div>
 `;
@@ -894,13 +989,21 @@
   try {
     chrome.runtime.onMessage.addListener((message) => {
       if (!message || !message.type) return;
-      if (window.top !== window.self) return;
+      const isTopFrame = window.top === window.self;
       if (message.type === 'vi-toggle') {
+        if (!isTopFrame) return;
         stopInspect();
         openAllVideos();
       } else if (message.type === 'vi-open-last') {
+        // 右键菜单只发到命中的 frame，iframe 里也要能打开，否则跨域播放器永远扫不到
         stopInspect();
-        openModal(picked && picked.isConnected ? picked : document.body || document.documentElement);
+        scanMode = 'normal';
+        updateScanModeUi();
+        // 用右键命中的视频容器做扫描根；找不到再回退整页
+        const root = (lastContextTarget && lastContextTarget.isConnected && findVideoRoot(lastContextTarget))
+          || (picked && picked.isConnected && findVideoRoot(picked) ? picked : null)
+          || document.body || document.documentElement;
+        openModal(root);
       }
     });
   } catch (_) {}
@@ -1102,10 +1205,13 @@
     };
     let target = hit.el;
     let videos = lookup(target);
-    // 点到封面/浮层等子元素时，最多向上找 4 层，找到含视频的容器为止
-    for (let i = 0; !videos.length && i < 4 && target.parentElement; i++) {
-      target = target.parentElement;
-      videos = lookup(target);
+    // 点到封面/控件等子元素时，向上（含 shadow host）找到最近含视频的容器
+    if (!videos.length) {
+      const near = findVideoRoot(hit.el);
+      if (near) {
+        target = near;
+        videos = lookup(near);
+      }
     }
     if (!videos.length) {
       mouse = { x: event.clientX, y: event.clientY };
@@ -1147,7 +1253,11 @@
   function onContextMenu(event) {
     if (isOwnEvent(event)) return;
     const node = deepestElement(event);
-    if (node) picked = node;
+    if (!node) return;
+    mouse = { x: event.clientX, y: event.clientY };
+    // 右键常常落在播放器控件/浮层上，向上找最近一个真正包含视频的容器
+    lastContextTarget = findVideoRoot(node) || node;
+    picked = lastContextTarget;
   }
 
   function onKeyDown(event) {
@@ -2091,15 +2201,77 @@
     refreshDownloadButtons();
   }
 
-  function renderDownloadSummary() {
-    const bar = shadow.querySelector('.vi-dlbar');
-    if (!bar) return;
-    const tasks = Array.from(downloadTasks.values());
+  function taskStatusText(task) {
+    if (task.phase === 'done') return t('downloadDone');
+    if (task.phase === 'queued') return t('queuedText');
+    if (task.phase === 'paused') return t('resumeText', { percent: task.percent || 0 });
+    if (task.phase === 'failed') return t('downloadFailed');
+    const phaseKey = task.phaseText === 'merging' ? 'phaseMerging'
+      : task.phaseText === 'verifying' ? 'phaseVerifying'
+      : task.phaseText === 'resolving' ? 'phaseResolving' : '';
+    return phaseKey ? t(phaseKey) : t('downloading') + (task.percent ? ' ' + task.percent + '%' : '');
+  }
+
+  function renderQueueList(tasks) {
+    const panel = shadow.querySelector('.vi-queue-panel');
+    const list = shadow.querySelector('.vi-queue-list');
+    if (!panel || !list || panel.hidden) return;
     if (!tasks.length) {
-      bar.hidden = true;
+      const empty = document.createElement('div');
+      empty.className = 'vi-queue-empty';
+      empty.textContent = t('queueEmpty');
+      list.replaceChildren(empty);
       return;
     }
-    bar.hidden = false;
+    const frag = document.createDocumentFragment();
+    tasks.forEach((task) => {
+      const row = document.createElement('div');
+      row.className = 'vi-queue-item';
+      const top = document.createElement('div');
+      top.className = 'vi-queue-item-top';
+      const name = document.createElement('span');
+      name.className = 'vi-queue-name';
+      name.textContent = fileName(task.item) || t('queueItemFallback');
+      name.title = name.textContent;
+      const state = document.createElement('span');
+      const stateClass = task.phase === 'done' ? 'is-done'
+        : task.phase === 'failed' ? 'is-failed'
+        : task.phase === 'downloading' ? 'is-active' : '';
+      state.className = 'vi-queue-state ' + stateClass;
+      state.textContent = taskStatusText(task);
+      top.append(name, state);
+      row.append(top);
+      if (task.phase === 'downloading' || task.phase === 'paused') {
+        const bar = document.createElement('div');
+        bar.className = 'vi-queue-item-bar';
+        const fill = document.createElement('i');
+        fill.style.width = Math.max(0, Math.min(100, task.percent || 0)) + '%';
+        bar.append(fill);
+        row.append(bar);
+      }
+      frag.append(row);
+    });
+    list.replaceChildren(frag);
+  }
+
+  function toggleQueuePanel(show) {
+    const panel = shadow.querySelector('.vi-queue-panel');
+    if (!panel) return;
+    const next = typeof show === 'boolean' ? show : panel.hidden;
+    panel.hidden = !next;
+    if (next) renderDownloadSummary();
+  }
+
+  function renderDownloadSummary() {
+    const fab = shadow.querySelector('.vi-queue-fab');
+    const panel = shadow.querySelector('.vi-queue-panel');
+    if (!fab || !panel) return;
+    const tasks = Array.from(downloadTasks.values());
+    if (!tasks.length) {
+      fab.hidden = true;
+      panel.hidden = true;
+      return;
+    }
     const counts = { done: 0, failed: 0, active: 0, queued: 0, paused: 0 };
     let loaded = 0;
     let total = 0;
@@ -2116,11 +2288,16 @@
     const percent = total > 0
       ? Math.round((loaded / total) * 100)
       : Math.round((counts.done / tasks.length) * 100);
-    const fill = bar.querySelector('.vi-dlbar-fill');
+    fab.hidden = false;
+    fab.classList.toggle('active', counts.active > 0);
+    const countEl = fab.querySelector('.vi-queue-fab-count');
+    if (countEl) countEl.textContent = String(tasks.length);
+    if (panel.hidden) return;
+    const fill = panel.querySelector('.vi-queue-fill');
     if (fill) fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
-    const text = bar.querySelector('.vi-dlbar-text');
-    if (text) {
-      text.textContent = t('dlStats', {
+    const stats = panel.querySelector('.vi-queue-stats');
+    if (stats) {
+      stats.textContent = t('dlStats', {
         done: counts.done,
         total: tasks.length,
         active: counts.active,
@@ -2128,6 +2305,7 @@
         failed: counts.failed
       }) + (counts.paused ? ' · ' + t('pausedCount', { count: counts.paused }) : '');
     }
+    renderQueueList(tasks);
   }
 
   function refreshDownloadButtons() {
@@ -2328,6 +2506,10 @@
       retryFailedDownloads();
     } else if (action === 'dl-clear') {
       clearFinishedDownloads();
+    } else if (action === 'queue-toggle') {
+      toggleQueuePanel();
+    } else if (action === 'queue-close') {
+      toggleQueuePanel(false);
     } else if (action === 'download') {
       const item = currentItems[index];
       if (item) startDownload(item);
@@ -2706,6 +2888,25 @@
       if (found) return found;
     } catch (_) {}
     return event.target && event.target.nodeType === 1 ? event.target : null;
+  }
+
+  // 从命中元素向上（含 shadow host）找最近一个子树里含视频的容器，最多 8 层
+  function findVideoRoot(node, maxHops = 8) {
+    let cur = node;
+    for (let i = 0; cur && i <= maxHops; i++) {
+      if (cur.nodeType === 1) {
+        const list = collectVideos(cur, 0, 0, 0);
+        if (list.length) return cur;
+      }
+      if (cur.parentElement) {
+        cur = cur.parentElement;
+      } else {
+        let root = null;
+        try { root = cur.getRootNode ? cur.getRootNode() : null; } catch (_) {}
+        cur = root && root.host ? root.host : null;
+      }
+    }
+    return null;
   }
 
   function isTyping(node) {

@@ -678,18 +678,33 @@
     const BoxParserRef = window.BoxParser;
     if (!ISO || !BoxParserRef) throw new Error('mp4box internals unavailable');
 
-    const videoBuf = toArrayBuffer(buffers[0]);
-    const audioBuf = toArrayBuffer(buffers[1]);
+    const firstBuf = toArrayBuffer(buffers[0]);
+    const secondBuf = toArrayBuffer(buffers[1]);
+
+    // 上游传下来的顺序可能是“音频在前”，按真实轨道类型纠正，否则会把音频当视频轨重封装，
+    // 产出“有声无画”的文件。
+    let videoBuf = firstBuf;
+    let audioBuf = secondBuf;
+    let vBin = probeTracksBinary(videoBuf);
+    let aBin = probeTracksBinary(audioBuf);
+    if (!vBin.hasVideo && aBin.hasVideo) {
+      videoBuf = secondBuf;
+      audioBuf = firstBuf;
+      vBin = aBin;
+      aBin = probeTracksBinary(audioBuf);
+      console.warn('[VI-AUDIO] swap tracks: first buffer is audio, second is video');
+    }
+    if (!vBin.hasVideo) throw new Error('merge failed: no video track in source');
 
     // 关键：如果视频文件本身已带音轨，绝不能再加一条音频轨，否则会产生
     // 1 视频 + 2 音频的非法 MP4，Windows 报「不受支持的编码设置」(0xC00D36E5)。
-    if (probeTracksBinary(videoBuf).hasAudio) {
+    if (vBin.hasAudio && vBin.hasVideo) {
       return new Blob([videoBuf], { type: 'video/mp4' });
     }
 
     const videoSource = await parseMp4File(videoBuf);
     const audioSource = await parseMp4File(audioBuf);
-    const vInfo = (videoSource.info.videoTracks || [])[0] || videoSource.info.tracks[0];
+    const vInfo = (videoSource.info.videoTracks || [])[0];
     const aInfo = (audioSource.info.audioTracks || [])[0];
     if (!vInfo) throw new Error('video track missing');
     if (!aInfo) throw new Error('audio track missing in audio stream');
@@ -1352,7 +1367,12 @@
           // 先看候选文件本身是否已带音轨：TikTok 的 playAddr/downloadAddr 有一部分是音视频合一的，
           // 这种情况直接单文件下载，既不用拼“背景音乐”，也不会受音乐 CDN 断连影响。
           const bin = probeTracksBinary(await probe.arrayBuffer());
-          if (bin.hasAudio) {
+          // 只有音轨没有视频轨的候选（常见于把 music 地址混进候选）不能当视频轨用
+          if (bin.hasAudio && !bin.hasVideo) {
+            console.warn('[VI-AUDIO] tiktok skip audio-only candidate', { codec: cand.codec, url: String(cand.url).slice(0, 120) });
+            continue;
+          }
+          if (bin.hasAudio && bin.hasVideo) {
             console.log('[VI-AUDIO] tiktok muxed source', { codec: cand.codec, audioTracks: bin.audioTracks });
             return {
               videoUrl: cand.url,

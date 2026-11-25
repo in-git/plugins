@@ -1030,7 +1030,21 @@
         let needMerge = true;
         if (typeof engine.probeTracks === 'function') {
           try {
-            const vp = await engine.probeTracks(buffers[0]);
+            let vp = await engine.probeTracks(buffers[0]);
+            // 上游可能把音轨排在前：没有视频轨就和对面试探交换，否则会把音频当视频保存
+            if (!vp.hasVideo && buffers.length > 1) {
+              const second = await engine.probeTracks(buffers[1]);
+              if (second && second.hasVideo) {
+                console.warn('[VI-AUDIO] swap tracks: first is audio, second is video');
+                const tmpBuf = buffers[0];
+                buffers[0] = buffers[1];
+                buffers[1] = tmpBuf;
+                const tmpBlob = tracks[0];
+                tracks[0] = tracks[1];
+                tracks[1] = tmpBlob;
+                vp = second;
+              }
+            }
             needMerge = !vp.hasAudio;
             console.log('[VI-AUDIO] probe video track', vp);
           } catch (e) { console.warn('[VI-AUDIO] probe failed', e); needMerge = true; }
@@ -1073,6 +1087,8 @@
         try {
           const probe = await engine.probeTracks(await finalBlob.arrayBuffer());
           console.log('[VI-AUDIO] final probe', probe, 'size', finalBlob.size);
+          // 合并结果必须同时有视频轨，否则就是“有声无画”，宁可报错也不落盘
+          if (!probe.hasVideo) throw new Error('merge produced no video track');
           if (probe.audioTracks > 1) {
             let sourceHasAudio = false;
             try {
@@ -1086,7 +1102,7 @@
             }
           }
         } catch (e) {
-          if (/no audio track/i.test(String(e && e.message))) throw e;
+          if (/no (audio|video) track|merge produced/i.test(String(e && e.message))) throw e;
         }
       }
 
