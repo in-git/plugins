@@ -683,7 +683,7 @@
       const v = pick('mse-video');
       if (!a || !v) { console.warn('[VI-MSE-DIAG] need both audio+video MSE blobs', !!a, !!v, 'matchUrl', matchUrl); return false; }
       const base = String(customFilename || 'youtube-mse-mux').replace(/\.[^.]+$/, '').slice(0, 80) || 'youtube-mse-mux';
-      const fname = base + '-' + Date.now() + '.mp4';
+      const fname = base + '.mp4';
       console.log('[VI-MSE-DIAG] mux(ffmpeg offscreen) start', { audio: a.blob.size, video: v.blob.size, at: a.type, vt: v.type, file: fname, aid: a.id, vid: v.id });
       try {
         const muxId = forcedMuxId || ('mse-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
