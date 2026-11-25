@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.10.5';
+  const EXT_VERSION = '1.11.0';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -37,7 +37,11 @@
     "actionTitle": "视频下载工具-吴文龙",
     "contextMenuTitle": "下载页面视频",
     "badgeIdle": "探查",
-    "badgeInspecting": "探查中：移动查看 · 单击选择元素 · Esc 退出",
+    "badgeInspecting": "探查中：移动查看 · 单击选择元素 · 框选区域 · Esc 退出",
+    "badgeArea": "框选模式：按住鼠标左键拖拽框选视频区域 · Esc 退出",
+    "areaFound": "框选区域内发现 $count$ 个视频",
+    "areaEmpty": "框选区域内没有视频，请重新框选",
+    "shortcutHint": "快捷键 Alt+S：框选页面区域，下载框内的视频 · Esc 退出",
     "badgeFound": "已探查到 $count$ 个视频",
     "badgeActiveShort": "探查中",
     "dialogTitle": "视频探查结果",
@@ -185,6 +189,55 @@
     font: 11px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   }
   .vi-box.video .vi-box-label { top: auto; bottom: -22px; background: rgba(0, 122, 255, .85); }
+
+  .vi-area-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    cursor: crosshair;
+    background: rgba(0, 0, 0, .12);
+    touch-action: none;
+    pointer-events: auto;
+  }
+  .vi-area-rect {
+    position: absolute;
+    border: 2px solid #007aff;
+    border-radius: 8px;
+    background: rgba(0, 122, 255, .12);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .5) inset;
+    pointer-events: none;
+  }
+  .vi-area-tip {
+    position: fixed;
+    z-index: 2147483647;
+    left: 50%;
+    top: 20px;
+    transform: translateX(-50%);
+    padding: 11px 20px;
+    border-radius: 12px;
+    background: rgba(29, 29, 31, .9);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .2);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .vi-area-toast {
+    position: fixed;
+    z-index: 2147483647;
+    left: 50%;
+    top: 76px;
+    transform: translateX(-50%);
+    padding: 9px 16px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .95);
+    border: 1px solid rgba(0, 0, 0, .06);
+    color: #1d1d1f;
+    font-size: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .1);
+    pointer-events: none;
+  }
 
   .vi-modal {
     position: absolute;
@@ -584,6 +637,11 @@
     background: #fff;
     border-top: 1px solid #f5f5f7;
   }
+  .vi-shortcut-hint {
+    color: #86868b;
+    font-size: 11px;
+    white-space: nowrap;
+  }
   .vi-btn.feedback {
     display: inline-flex;
     align-items: center;
@@ -603,6 +661,11 @@
 
 <div class="vi-tip"></div>
 <div class="vi-boxes"></div>
+<div class="vi-area-overlay" hidden>
+  <div class="vi-area-rect" hidden></div>
+</div>
+<div class="vi-area-tip" hidden></div>
+<div class="vi-area-toast" hidden></div>
 
 <div class="vi-modal" hidden>
   <div class="vi-dialog" role="dialog" aria-modal="true" aria-labelledby="vi-title">
@@ -646,6 +709,7 @@
     <div class="vi-grid"></div>
 
     <footer class="vi-footer">
+      <span class="vi-shortcut-hint">${t('shortcutHint')}</span>
       <button class="vi-btn feedback" type="button" data-action="feedback" title="可在B站私信反馈问题：${FEEDBACK_URL}">
         <svg class="vi-feedback-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v10h16V6H4z"/></svg>
         <span>${t('feedback')}</span>
@@ -659,6 +723,10 @@
   const q = (selector) => shadow.querySelector(selector);
   const tip = q('.vi-tip');
   const boxes = q('.vi-boxes');
+  const areaOverlay = q('.vi-area-overlay');
+  const areaRect = q('.vi-area-rect');
+  const areaTip = q('.vi-area-tip');
+  const areaToast = q('.vi-area-toast');
   const modal = q('.vi-modal');
   const dialog = q('.vi-dialog');
   const head = q('.vi-head');
@@ -672,10 +740,14 @@
   let dialogOffset = { x: 0, y: 0 };
   let dragState = null;
   let qualitySeq = 0;
+  let areaMode = false;
+  let areaStart = null;
+  let areaToastTimer = null;
 
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('mousemove', onMouseMove, true);
   document.addEventListener('mousedown', onMouseDown, true);
+  document.addEventListener('mouseup', onMouseUp, true);
   document.addEventListener('click', onPageClick, true);
   document.addEventListener('contextmenu', onContextMenu, true);
   window.addEventListener('scroll', schedule, true);
@@ -812,6 +884,118 @@
     tip.style.display = 'none';
   }
 
+  function showAreaToast(text) {
+    if (!areaToast) return;
+    areaToast.textContent = text;
+    areaToast.hidden = false;
+    if (areaToastTimer) clearTimeout(areaToastTimer);
+    areaToastTimer = setTimeout(() => { areaToast.hidden = true; }, 2600);
+  }
+
+  function startAreaMode() {
+    if (!modal.hidden) closeModal();
+    stopInspect();
+    areaMode = true;
+    areaStart = null;
+    areaOverlay.hidden = false;
+    areaTip.textContent = t('badgeArea');
+    areaTip.hidden = false;
+    areaRect.hidden = true;
+  }
+
+  function stopAreaMode() {
+    areaMode = false;
+    areaStart = null;
+    areaOverlay.hidden = true;
+    areaTip.hidden = true;
+    areaRect.hidden = true;
+  }
+
+  function updateAreaRect(event) {
+    if (!areaRect || !areaStart) return;
+    const left = Math.min(areaStart.x, event.clientX);
+    const top = Math.min(areaStart.y, event.clientY);
+    const width = Math.abs(event.clientX - areaStart.x);
+    const height = Math.abs(event.clientY - areaStart.y);
+    areaRect.style.left = left + 'px';
+    areaRect.style.top = top + 'px';
+    areaRect.style.width = width + 'px';
+    areaRect.style.height = height + 'px';
+    areaRect.hidden = width < 2 || height < 2;
+    if (width >= 2 && height >= 2) {
+      const count = countVideosInRect({ left, top, width, height });
+      areaTip.textContent = t('areaFound', { count });
+    }
+  }
+
+  function countVideosInRect(rect) {
+    const videos = collectVideos(document.body || document.documentElement, 0, 0, 0, [], new Set(), MAX_DEPTH);
+    return videos.filter((item) => {
+      const box = item.el.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) return false;
+      return !(box.right < rect.left || box.left > rect.left + rect.width ||
+        box.bottom < rect.top || box.top > rect.top + rect.height);
+    }).length;
+  }
+
+  function finishAreaSelection() {
+    if (!areaRect || areaRect.hidden || !areaStart) return;
+    const rect = {
+      left: parseFloat(areaRect.style.left) || 0,
+      top: parseFloat(areaRect.style.top) || 0,
+      width: parseFloat(areaRect.style.width) || 0,
+      height: parseFloat(areaRect.style.height) || 0
+    };
+    stopAreaMode();
+    if (rect.width < 8 || rect.height < 8) return;
+
+    const videos = collectVideos(document.body || document.documentElement, 0, 0, 0, [], new Set(), MAX_DEPTH).filter((item) => {
+      const box = item.el.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) return false;
+      const visibleLeft = Math.max(box.left, rect.left);
+      const visibleTop = Math.max(box.top, rect.top);
+      const visibleRight = Math.min(box.right, rect.left + rect.width);
+      const visibleBottom = Math.min(box.bottom, rect.top + rect.height);
+      if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) return false;
+      const visibleArea = (visibleRight - visibleLeft) * (visibleBottom - visibleTop);
+      return visibleArea >= Math.min(box.width * box.height * 0.25, 2500);
+    });
+
+    if (!videos.length) {
+      showAreaToast(t('areaEmpty'));
+      return;
+    }
+    showAreaToast(t('areaFound', { count: videos.length }));
+    cache = new WeakMap();
+    picked = document.body || document.documentElement;
+    openAreaModal(videos);
+  }
+
+  function openAreaModal(videos) {
+    modal.hidden = false;
+    resetDialogPosition();
+    if (numEl) numEl.textContent = '0';
+    if (selectAll) selectAll.checked = true;
+    scanMode = 'normal';
+    updateScanModeUi();
+    currentItems = videos.map((item, index) => buildItem(item, index));
+    currentItems.forEach((item) => {
+      const videoTask = downloadTasks.get(itemKey(item));
+      if (videoTask) videoTask.item = item;
+    });
+    if (numEl) numEl.textContent = String(videos.length);
+    try {
+      renderGrid();
+      refreshDownloadButtons();
+    } catch (error) {
+      console.error('[VideoInspector] area render failed:', error);
+      grid.replaceChildren();
+    }
+    loadSizes();
+    requestCapturedResources();
+    requestQualities();
+  }
+
   function schedule() {
     if (!active || rafId) return;
     rafId = requestAnimationFrame(() => {
@@ -821,12 +1005,24 @@
   }
 
   function onMouseMove(event) {
+    if (areaMode) {
+      if (areaStart) updateAreaRect(event);
+      return;
+    }
     if (!active || isOwnEvent(event)) return;
     mouse = { x: event.clientX, y: event.clientY };
     schedule();
   }
 
   function onMouseDown(event) {
+    if (areaMode) {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      areaStart = { x: event.clientX, y: event.clientY };
+      areaRect.hidden = true;
+      return;
+    }
     if (!active || event.button !== 0 || isOwnEvent(event)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -840,7 +1036,19 @@
     openModal(picked);
   }
 
+  function onMouseUp(event) {
+    if (!areaMode || !areaStart) return;
+    event.preventDefault();
+    event.stopPropagation();
+    finishAreaSelection();
+  }
+
   function onPageClick(event) {
+    if (areaMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (suppressClick && !isOwnEvent(event)) {
       suppressClick = false;
       event.preventDefault();
@@ -860,6 +1068,20 @@
   }
 
   function onKeyDown(event) {
+    if (event.altKey && (event.key === 's' || event.key === 'S')) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (areaMode) stopAreaMode();
+      else startAreaMode();
+      return;
+    }
+    if (areaMode) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        stopAreaMode();
+      }
+      return;
+    }
     if (!modal.hidden) {
       if (event.key === 'Escape') {
         event.preventDefault();
