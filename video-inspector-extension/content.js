@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.19.26';
+  const EXT_VERSION = '1.19.27';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -1846,7 +1846,7 @@
     if (scanMode === 'deep') {
       const header = document.createElement('div');
       header.className = 'vi-list-header';
-      ['', '#', t('customTitle'), t('metaDuration'), t('metaResolution'), t('metaSize'), t('source'), t('download')].forEach((label) => {
+      ['', '#', t('customTitle'), t('metaResolution'), t('metaSize'), t('source'), t('download')].forEach((label) => {
         const cell = document.createElement('span');
         cell.textContent = label;
         header.appendChild(cell);
@@ -1896,14 +1896,14 @@
     titleInput.type = 'text';
     titleInput.className = 'vi-list-title-input';
     titleInput.placeholder = t('customTitlePlaceholder');
-    titleInput.value = item.customTitle || titleText;
+    if (!item.customTitle) item.customTitle = cleanPageTitle();
+    titleInput.value = item.customTitle;
     titleInput.title = titleText;
     titleInput.setAttribute('data-index', String(item.index));
     titleInput.addEventListener('input', () => { item.customTitle = titleInput.value; });
     titleCell.appendChild(titleInput);
     row.appendChild(titleCell);
 
-    row.appendChild(listCell('', item.duration, item.hasDuration));
     row.appendChild(listCell('', item.resolution, item.hasResolution));
     row.appendChild(listCell('', item.sizeText, item.hasSize));
     row.appendChild(listCell('', '发现 · ' + (item.discoverySource || 'scan'), false));
@@ -1966,12 +1966,11 @@
     const meta = document.createElement('div');
     meta.className = 'vi-meta';
     [
-      t('metaDuration') + ' ' + item.duration,
       t('metaResolution') + ' ' + item.resolution,
       t('metaSize') + ' ' + item.sizeText
     ].forEach((text, metaIndex) => {
       const chip = document.createElement('span');
-      chip.className = 'vi-chip' + (metaIndex === 2 ? ' vi-size' : '');
+      chip.className = 'vi-chip' + (metaIndex === 1 ? ' vi-size' : '');
       chip.textContent = text;
       meta.appendChild(chip);
     });
@@ -2002,7 +2001,8 @@
     titleInput.type = 'text';
     titleInput.className = 'vi-title-input';
     titleInput.placeholder = t('customTitlePlaceholder');
-    titleInput.value = item.customTitle || '';
+    if (!item.customTitle) item.customTitle = cleanPageTitle();
+    titleInput.value = item.customTitle;
     titleInput.setAttribute('data-index', String(item.index));
     titleInput.addEventListener('input', () => {
       item.customTitle = titleInput.value;
@@ -2121,6 +2121,11 @@
     } catch (_) {}
 
     return candidates;
+  }
+
+  // 页面标题清洗成可作文件名的字符串（与 fileName 的规则一致）
+  function cleanPageTitle() {
+    return String(document.title || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
   }
 
   function fileName(item, forceExt) {
