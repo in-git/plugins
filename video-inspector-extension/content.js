@@ -5,7 +5,7 @@
   window.__videoInspectorLoaded = true;
 
   const MAX_DEPTH = 12;
-  const EXT_VERSION = '1.8.7';
+  const EXT_VERSION = '1.8.14';
   const FEEDBACK_URL = 'https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0';
   const PREVIEW_LIMIT = 60;
   const DOWNLOAD_STALL_TIMEOUT = 90000;
@@ -187,7 +187,7 @@
   .vi-dialog {
     position: relative;
     width: min(1160px, 100%);
-    max-height: min(88vh, 900px);
+    height: 70vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -301,12 +301,24 @@
     overflow-x: hidden;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-auto-rows: max-content;
     align-content: start;
+    align-items: start;
     gap: 24px;
     padding: 32px 40px 40px;
     background: #f6f6f7;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, .18) transparent;
   }
+  .vi-grid::-webkit-scrollbar { width: 8px; }
+  .vi-grid::-webkit-scrollbar-track { background: transparent; }
+  .vi-grid::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, .14); border-radius: 8px; border: 2px solid #f6f6f7; }
   .vi-card {
+    position: relative;
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     border-radius: 16px;
     background: #fff;
@@ -353,8 +365,29 @@
     color: #fff;
     font-size: 10px;
   }
+  .vi-info {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    padding: 30px 12px 10px;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, .78));
+    color: #fff;
+    pointer-events: none;
+  }
+  .vi-info-title {
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: #fff;
+    word-break: break-all;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  }
   .vi-body { padding: 18px 18px 20px; }
-  .vi-title-field { display: block; margin-bottom: 12px; }
+  .vi-card-row { display: flex; align-items: flex-end; gap: 10px; }
+  .vi-card-row .vi-title-field { flex: 1; min-width: 0; margin-bottom: 0; }
   .vi-title-label {
     display: block;
     margin-bottom: 6px;
@@ -375,24 +408,19 @@
   }
   .vi-title-input:focus { background: #fff; border-color: #007aff; box-shadow: 0 0 0 3px rgba(0, 122, 255, .12); }
   .vi-title-input::placeholder { color: #aeaeb2; }
-  .vi-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .vi-meta { display: flex; flex-wrap: wrap; gap: 6px; }
   .vi-chip {
-    padding: 4px 9px;
+    padding: 3px 8px;
     border-radius: 6px;
-    background: #f6f6f7;
-    color: #86868b;
+    background: rgba(255, 255, 255, .18);
+    color: #fff;
     font-size: 11px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
-  .vi-chip.done { background: rgba(52, 199, 89, .12); color: #248a3d; }
-  .vi-src {
-    height: 36px;
-    margin-bottom: 16px;
-    overflow: hidden;
-    color: #aeaeb2;
-    font: 11px/1.7 ui-monospace, Consolas, monospace;
-    word-break: break-all;
-  }
-  .vi-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .vi-chip.done { background: rgba(52, 199, 89, .9); color: #fff; }
+  .vi-card-actions { display: flex; flex: none; align-items: center; }
+  .vi-card-actions .vi-card-download { min-width: 84px; }
   .vi-check-all {
     display: flex; align-items: center; gap: 9px;
     font-size: 13px; color: #1d1d1f; cursor: pointer; white-space: nowrap;
@@ -492,7 +520,6 @@
       </label>
       <div class="vi-actions">
         <button class="vi-btn primary" type="button" data-action="download-all">${t('downloadAll')}</button>
-        <button class="vi-btn" type="button" data-action="copy-all">${t('copyAll')}</button>
         <button class="vi-btn" type="button" data-action="refresh">${t('refresh')}</button>
       </div>
     </div>
@@ -885,6 +912,35 @@
     check.appendChild(checkBox);
     media.appendChild(check);
 
+    const info = document.createElement('div');
+    info.className = 'vi-info';
+    const infoTitle = document.createElement('div');
+    infoTitle.className = 'vi-info-title';
+    infoTitle.textContent = item.label || (item.isResource ? t('resourcePreview') : 'video');
+    infoTitle.title = infoTitle.textContent;
+    info.appendChild(infoTitle);
+
+    const meta = document.createElement('div');
+    meta.className = 'vi-meta';
+    [
+      t('metaDuration') + ' ' + item.duration,
+      t('metaResolution') + ' ' + item.resolution,
+      t('metaSize') + ' ' + item.sizeText
+    ].forEach((text, metaIndex) => {
+      const chip = document.createElement('span');
+      chip.className = 'vi-chip' + (metaIndex === 2 ? ' vi-size' : '');
+      chip.textContent = text;
+      meta.appendChild(chip);
+    });
+    if (task && task.phase === 'done') {
+      const doneChip = document.createElement('span');
+      doneChip.className = 'vi-chip done';
+      doneChip.textContent = '✓ ' + t('completed');
+      meta.appendChild(doneChip);
+    }
+    info.appendChild(meta);
+    media.appendChild(info);
+
     const body = document.createElement('div');
     body.className = 'vi-body';
 
@@ -903,37 +959,10 @@
       item.customTitle = titleInput.value;
     });
     titleRow.append(titleLabel, titleInput);
-    body.appendChild(titleRow);
-
-    const meta = document.createElement('div');
-    meta.className = 'vi-meta';
-    [
-      t('metaDuration') + ' ' + item.duration,
-      t('metaResolution') + ' ' + item.resolution,
-      t('metaSize') + ' ' + item.sizeText
-    ].forEach((text, index) => {
-      const chip = document.createElement('span');
-      chip.className = 'vi-chip' + (index === 2 ? ' vi-size' : '');
-      chip.textContent = text;
-      meta.appendChild(chip);
-    });
-    if (task && task.phase === 'done') {
-      const doneChip = document.createElement('span');
-      doneChip.className = 'vi-chip done';
-      doneChip.textContent = '✓ ' + t('completed');
-      meta.appendChild(doneChip);
-    }
-    body.appendChild(meta);
-
-    const src = document.createElement('div');
-    src.className = 'vi-src';
-    src.textContent = item.src || t('noSrc');
-    src.title = item.src || '';
-    body.appendChild(src);
 
     const actions = document.createElement('div');
     actions.className = 'vi-card-actions';
-    const downloadBtn = makeButton(t('download'), 'download', item.index, 'primary small');
+    const downloadBtn = makeButton(t('download'), 'download', item.index, 'primary vi-card-download');
     if (task && task.phase === 'downloading') {
       setButtonLoading(downloadBtn, true, t('downloading'));
     } else if (task && task.phase === 'done') {
@@ -943,8 +972,11 @@
       downloadBtn.title = task.lastError || '';
     }
     actions.appendChild(downloadBtn);
-    actions.appendChild(makeButton(t('copyAddress'), 'copy', item.index, 'small'));
-    body.appendChild(actions);
+
+    const row = document.createElement('div');
+    row.className = 'vi-card-row';
+    row.append(titleRow, actions);
+    body.appendChild(row);
 
     card.append(media, body);
     return card;

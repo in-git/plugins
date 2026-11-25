@@ -419,6 +419,11 @@
     let url = payload.url;
     let videoUrl = payload.videoUrl;
     let audioUrl = payload.audioUrl;
+    console.log('[VI-AUDIO] request', {
+      id, forceKind: forceKind || '', url: String(url || '').slice(0, 160),
+      videoUrl: String(videoUrl || '').slice(0, 120), audioUrl: String(audioUrl || '').slice(0, 120),
+      qualityId: payload.qualityId || ''
+    });
 
     if (!engine) {
       fire(RESPONSE, { id, ok: false, error: 'download engine unavailable', validated: false });
@@ -443,6 +448,11 @@
           ? engine.referrerMeta(payload.pageUrl || '', url || '', null, '')
           : null;
         const resolved = await engine.resolvePlatform(url, payload.pageUrl, payload.qualityId, resolvedMeta || undefined);
+        console.log('[VI-AUDIO] platform resolved', {
+          kind: resolved && resolved.kind,
+          videoUrl: String((resolved && resolved.videoUrl) || '').slice(0, 160),
+          audioUrl: String((resolved && resolved.audioUrl) || '').slice(0, 160)
+        });
         if (resolved && resolved.videoUrl) {
           kind = resolved.kind;
           payload.videoUrl = resolved.videoUrl;
@@ -478,8 +488,11 @@
         let a = null;
         if (payload.audioUrl) {
           try { a = await engine.fetchWhole(payload.audioUrl, controller.signal, onProgress, dlArg); }
-          catch (_) { a = null; }
+          catch (e) { console.warn('[VI-AUDIO] audio fetch failed', String(e && e.message || e)); a = null; }
+        } else {
+          console.warn('[VI-AUDIO] streams without audioUrl -> will be silent');
         }
+        console.log('[VI-AUDIO] streams fetched', { videoBytes: (v.tracks[0] && v.tracks[0].size) || 0, audioBytes: (a && a.tracks[0] && a.tracks[0].size) || 0 });
         result = {
           tracks: a ? [v.tracks[0], a.tracks[0]] : [v.tracks[0]],
           ext: 'mp4', duration: expectedDuration || 0, skipDurationCheck: !!a
@@ -489,7 +502,9 @@
         let a = null;
         if (audioUrl) {
           try { a = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg); }
-          catch (_) { a = null; }
+          catch (e) { console.warn('[VI-AUDIO] audio fetch failed', String(e && e.message || e)); a = null; }
+        } else {
+          console.warn('[VI-AUDIO] streams without audioUrl -> will be silent');
         }
         result = {
           tracks: a ? [v.tracks[0], a.tracks[0]] : [v.tracks[0]],
@@ -502,6 +517,7 @@
       let tracks = result.tracks || [result.blob];
       let finalBlob;
       let finalExt = result.ext || 'mp4';
+      console.log('[VI-AUDIO] result', { kind, trackCount: tracks.length, ext: finalExt, sizes: tracks.map((t) => t && t.size || 0) });
 
       if (tracks.length > 1) {
         fire(PROGRESS, { id, loaded: 0, total: 100, percent: 0, phase: 'merging' });
@@ -516,17 +532,23 @@
         // 视频轨本身已有音轨时不需要合并
         let needMerge = true;
         if (typeof engine.probeTracks === 'function') {
-          try { needMerge = !(await engine.probeTracks(buffers[0])).hasAudio; }
-          catch (_) { needMerge = true; }
+          try {
+            const vp = await engine.probeTracks(buffers[0]);
+            needMerge = !vp.hasAudio;
+            console.log('[VI-AUDIO] probe video track', vp);
+          } catch (e) { console.warn('[VI-AUDIO] probe failed', e); needMerge = true; }
         }
         if (!needMerge) {
+          console.warn('[VI-AUDIO] skip merge: source video already has audio');
           finalBlob = tracks[0];
           finalExt = result.ext || 'mp4';
         } else try {
           finalBlob = await engine.mergeStreams(buffers);
           finalExt = 'mp4';
+          console.log('[VI-AUDIO] merge ok, bytes', finalBlob.size);
         } catch (mergeError) {
           // 合并失败（如音频是 MP3 无法注入 MP4 容器）：回退为仅保存视频轨，避免整体失败。
+          console.error('[VI-AUDIO] merge FAILED -> fallback to silent video', mergeError);
           finalBlob = tracks[0];
           finalExt = result.ext || 'mp4';
         }
@@ -545,14 +567,24 @@
         }
       }
 
-      // 最终校验：修正音轨数量异常
-      if (typeof engine.probeTracks === 'function') {
+      // 最终校验：probeTracks 的 audioTracks 取 MP4Box 解析值与二进制 soun 计数的最大值，
+      // fMP4 中 soun 常被重复扫描到，>1 多为误判。只有原始视频轨本身带音轨时多轨才是真异常；
+      // 否则回退会把已经合并进去的音频丢掉，导致下载的视频没声音。
+      if (typeof engine.probeTracks === 'function' && tracks.length > 1) {
         try {
           const probe = await engine.probeTracks(await finalBlob.arrayBuffer());
+          console.log('[VI-AUDIO] final probe', probe, 'size', finalBlob.size);
           if (probe.audioTracks > 1) {
-            // 2 条以上音轨是非法 MP4（Windows 报 0xC00D36E5），回退为原始视频轨
-            finalBlob = tracks[0];
-            finalExt = result.ext || 'mp4';
+            let sourceHasAudio = false;
+            try {
+              const sourceProbe = await engine.probeTracks(await tracks[0].arrayBuffer());
+              sourceHasAudio = !!(sourceProbe && sourceProbe.hasAudio);
+            } catch (_) {}
+            console.warn('[VI-AUDIO] multi-audio, sourceHasAudio=', sourceHasAudio);
+            if (sourceHasAudio) {
+              finalBlob = tracks[0];
+              finalExt = result.ext || 'mp4';
+            }
           }
         } catch (e) {
           if (/no audio track/i.test(String(e && e.message))) throw e;
