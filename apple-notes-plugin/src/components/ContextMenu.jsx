@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Icon } from './icons.jsx';
 
-export default function ContextMenu({ menu, onClose, onAction }) {
+export default function ContextMenu({ menu, onClose, onAction, canPaste }) {
   useEffect(() => {
     if (!menu) return undefined;
 
@@ -25,18 +25,23 @@ export default function ContextMenu({ menu, onClose, onAction }) {
   if (!menu) return null;
 
   const node = menu.node;
-  const items = [
-    { id: 'newDoc', label: '新建文档', icon: 'docPlus' },
-    { id: 'newFolder', label: '新建目录', icon: 'folderPlus' }
-  ];
+  const items = [];
   if (node) {
-    items.push({ id: 'sep', sep: true });
+    items.push({ id: 'copy', label: '复制', icon: 'copy' });
+    items.push({ id: 'cut', label: '剪切', icon: 'scissors' });
+  }
+  if (canPaste) items.push({ id: 'paste', label: '粘贴', icon: 'clipboard' });
+  if (node || canPaste) items.push({ id: 'sep-new', sep: true });
+  items.push({ id: 'newDoc', label: '新建文档', icon: 'docPlus' });
+  items.push({ id: 'newFolder', label: '新建目录', icon: 'folderPlus' });
+  if (node) {
+    items.push({ id: 'sep-edit', sep: true });
     items.push({ id: 'rename', label: '重命名', icon: 'pencil' });
     items.push({ id: 'delete', label: '删除', icon: 'trash', danger: true });
   }
 
   const left = Math.max(8, Math.min(menu.x, window.innerWidth - 200));
-  const top = Math.max(8, Math.min(menu.y, window.innerHeight - 240));
+  const top = Math.max(8, Math.min(menu.y, window.innerHeight - 340));
 
   return (
     <div

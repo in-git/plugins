@@ -70,7 +70,7 @@ function TreeNode({
   dropHint,
   searching,
   visibleIds,
-  onSelect,
+  onActivate,
   onToggle,
   onContextMenu,
   onStartRename,
@@ -118,7 +118,7 @@ function TreeNode({
         className={'tree-item' + stateClass}
         style={{ paddingLeft: 8 + depth * 12 }}
         title={displayTitle(node)}
-        onClick={() => onSelect(node.id)}
+        onClick={() => onActivate(node)}
         onDoubleClick={() => onStartRename(node.id)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -133,13 +133,13 @@ function TreeNode({
               onToggle(node.id);
             }}
           >
-            <Icon name="chevron" size={12} stroke={1.6} />
+            <Icon name="chevron" size={14} stroke={1.6} />
           </span>
         ) : (
           <span className="tree-chevron is-leaf" />
         )}
         <span className="tree-icon">
-          <Icon name={node.type === 'folder' ? 'folder' : 'doc'} size={15} />
+          <Icon name={node.type === 'folder' ? 'folder' : 'doc'} size={18} />
         </span>
         {renamingId === node.id ? (
           <RenameInput
@@ -165,7 +165,7 @@ function TreeNode({
               dropHint={dropHint}
               searching={searching}
               visibleIds={visibleIds}
-              onSelect={onSelect}
+              onActivate={onActivate}
               onToggle={onToggle}
               onContextMenu={onContextMenu}
               onStartRename={onStartRename}
@@ -306,9 +306,11 @@ export default function SidebarTree({
     onMove({ id: active.id, parentId: targetParent, index });
   };
 
-  const handleSelect = (id) => {
+  // 点击行：选中；目录同时展开/收起。拖拽刚结束时忽略，避免误操作
+  const handleActivate = (node) => {
     if (Date.now() < clickGuardRef.current) return;
-    onSelect(id);
+    onSelect(node.id);
+    if (node.type === 'folder') onToggle(node.id);
   };
 
   if (!roots.length) {
@@ -349,7 +351,7 @@ export default function SidebarTree({
             dropHint={dropHint}
             searching={searching}
             visibleIds={visibleIds}
-            onSelect={handleSelect}
+            onActivate={handleActivate}
             onToggle={onToggle}
             onContextMenu={onContextMenu}
             onStartRename={onStartRename}
@@ -364,7 +366,7 @@ export default function SidebarTree({
           {dragNode ? (
             <div className="tree-drag-overlay">
               <span className="tree-icon">
-                <Icon name={dragNode.type === 'folder' ? 'folder' : 'doc'} size={15} />
+                <Icon name={dragNode.type === 'folder' ? 'folder' : 'doc'} size={18} />
               </span>
               <span className="tree-title">{displayTitle(dragNode)}</span>
             </div>

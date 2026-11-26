@@ -1059,13 +1059,31 @@
   // 检测到音视频两组分片齐全后，先给下载按钮几秒缓冲倒计时，再放开点击。
   let mseCountdownTimer = 0;
   let mseCountdownUntil = 0;
+  // 倒计时是否已对「当前这组音视频资源」完成过。仅当资源换成新视频时才重新倒计时。
   let mseCountdownDone = false;
+  let mseCountdownKey = '';
   const MSE_COUNTDOWN_SEC = 5;
+
+  function mseResourceKey(items) {
+    const audio = items.find((r) => r && r.source === 'mse-audio' && (Number(r.size) || 0) > 1024);
+    const video = items.find((r) => r && r.source === 'mse-video' && (Number(r.size) || 0) > 1024);
+    if (!audio || !video) return '';
+    return String(audio.id || audio.url || '') + '|' + String(video.id || video.url || '');
+  }
+
   function maybeStartMseCountdown(items) {
-    if (!modal || modal.hidden || mseCountdownTimer || mseCountdownDone) return;
-    const hasAudio = items.some((r) => r && r.source === 'mse-audio' && (Number(r.size) || 0) > 1024);
-    const hasVideo = items.some((r) => r && r.source === 'mse-video' && (Number(r.size) || 0) > 1024);
-    if (!hasAudio || !hasVideo) return;
+    const key = mseResourceKey(items);
+    if (!key) return; // 音视频任一分片未就绪
+    if (mseCountdownDone && key === mseCountdownKey) return; // 同一视频已倒计时完成
+    if (mseCountdownTimer) return; // 正在倒计时
+    if (!modal || modal.hidden) return; // 弹窗关闭时不计时
+
+    // 资源换了新视频 → 重置完成标记
+    if (mseCountdownDone && key !== mseCountdownKey) {
+      mseCountdownDone = false;
+    }
+    mseCountdownKey = key;
+
     mseCountdownUntil = Date.now() + MSE_COUNTDOWN_SEC * 1000;
     const tick = () => {
       const left = Math.max(0, Math.ceil((mseCountdownUntil - Date.now()) / 1000));
@@ -1498,8 +1516,9 @@
     if (!root || !root.isConnected) root = document.body || document.documentElement;
     cache = new WeakMap();
     picked = root;
+    // 关闭弹窗期间倒计时仍在后台跑；打开时清掉定时器并恢复下载按钮状态
+    // 注意：mseCountdownDone 与 mseCountdownKey 保留，仅在检测到新视频资源时才重新倒计时
     if (mseCountdownTimer) { clearInterval(mseCountdownTimer); mseCountdownTimer = 0; }
-    mseCountdownDone = false;
     modal.hidden = false;
     resetDialogPosition();
     if (numEl) numEl.textContent = '0';
@@ -1790,6 +1809,7 @@
     modal.hidden = true;
     integratingScanId = '';
     scanLoading = false;
+    if (mseCountdownTimer) { clearInterval(mseCountdownTimer); mseCountdownTimer = 0; }
     if (deepScanTimer) clearTimeout(deepScanTimer);
     if (capturePollTimer) clearInterval(capturePollTimer);
     grid.querySelectorAll('.vi-thumb, video').forEach((el) => {

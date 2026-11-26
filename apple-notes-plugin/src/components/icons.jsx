@@ -62,7 +62,26 @@ const PATHS = {
       <path d="M5.6 15 10 10.9l4.4 4.1" />
     </>
   ),
-  close: <path d="M6 6l8 8M14 6l-8 8" />
+  close: <path d="M6 6l8 8M14 6l-8 8" />,
+  copy: (
+    <>
+      <rect x="7.2" y="7.2" width="8.6" height="8.6" rx="2" />
+      <path d="M12.8 7.2V6a1.8 1.8 0 0 0-1.8-1.8H6A1.8 1.8 0 0 0 4.2 6v5a1.8 1.8 0 0 0 1.8 1.8h1.2" />
+    </>
+  ),
+  scissors: (
+    <>
+      <circle cx="5.6" cy="5.8" r="2" />
+      <circle cx="5.6" cy="14.2" r="2" />
+      <path d="M7.3 7.1 15.4 14.2M7.3 12.9 15.4 5.8" />
+    </>
+  ),
+  clipboard: (
+    <>
+      <path d="M7.4 4.8H6.2A1.8 1.8 0 0 0 4.4 6.6v8.6a1.8 1.8 0 0 0 1.8 1.8h7.6a1.8 1.8 0 0 0 1.8-1.8V6.6a1.8 1.8 0 0 0-1.8-1.8h-1.2" />
+      <rect x="7.4" y="3" width="5.2" height="3.2" rx="1.3" />
+    </>
+  )
 };
 
 export function Icon({ name, size = 16, stroke = 1.4, className = '' }) {

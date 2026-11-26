@@ -18,18 +18,6 @@ module.exports = {
         danger: 'rgb(var(--danger) / <alpha-value>)',
         hairline: 'rgb(var(--line) / 0.1)'
       },
-      fontFamily: {
-        sans: [
-          '-apple-system',
-          'BlinkMacSystemFont',
-          '"SF Pro Text"',
-          '"Helvetica Neue"',
-          '"PingFang SC"',
-          '"Microsoft YaHei"',
-          'sans-serif'
-        ],
-        mono: ['"SF Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace']
-      },
       borderRadius: {
         control: '10px',
         card: '18px',

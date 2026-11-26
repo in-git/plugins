@@ -24,7 +24,6 @@ html [class*='aieditor'][data-theme='light'] {
   --aieditor-code-ink: rgb(var(--ink));
   --aieditor-document-color: rgb(var(--ink));
   --aieditor-document-background-color: transparent;
-  --aieditor-document-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --aieditor-document-font-size: 15px;
   --aieditor-document-line-height: 1.9;
   --aieditor-document-paragraph-margin-top: 0.65em;
@@ -93,7 +92,6 @@ html .aieditor {
   border-radius: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
 }
 
 html .aieditor__toolbar {

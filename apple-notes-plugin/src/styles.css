@@ -40,14 +40,8 @@
     height: 100%;
   }
 
-  html {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-  }
-
   body {
-    @apply overflow-hidden bg-canvas font-sans text-lead text-ink;
+    @apply overflow-hidden bg-canvas text-lead text-ink;
   }
 
   ::selection {
@@ -160,7 +154,7 @@
   }
 
   .tree-chevron {
-    @apply flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] text-muted
+    @apply flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] text-muted
       transition-transform duration-150 hover:bg-ink/[0.06] hover:text-ink;
   }
 
@@ -173,7 +167,7 @@
   }
 
   .tree-icon {
-    @apply flex h-[18px] w-[18px] shrink-0 items-center justify-center;
+    @apply flex h-5 w-5 shrink-0 items-center justify-center;
   }
 
   .tree-title {
