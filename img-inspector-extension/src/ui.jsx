@@ -619,7 +619,7 @@ function Panel() {
       <div ref={panelRef} className="ii-panel relative flex flex-col overflow-hidden rounded-modal bg-white font-sans text-ink antialiased shadow-[0_24px_80px_-16px_rgba(0,0,0,0.14),0_2px_8px_rgba(0,0,0,0.03)]">
         <header className="flex shrink-0 items-center justify-between px-9 pb-5 pt-7">
           <div className="flex items-baseline gap-3">
-            <h1 className="text-[17px] font-semibold tracking-[-0.01em] text-ink">图片下载器-吴文龙</h1>
+            <h1 className="text-[17px] font-semibold tracking-[-0.01em] text-ink">文龙图片下载助手</h1>
             <span className="max-w-[260px] truncate text-[11px] text-[#b8b8bd]" title={s.title}>{s.site}</span>
           </div>
           <div className="flex items-center gap-3">

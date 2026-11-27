@@ -72,6 +72,7 @@ function TreeNode({
   visibleIds,
   onActivate,
   onToggle,
+  onCreateSubfolder,
   onContextMenu,
   onStartRename,
   onCommitRename,
@@ -150,6 +151,19 @@ function TreeNode({
         ) : (
           <span className="tree-title">{displayTitle(node)}</span>
         )}
+        {node.type === 'folder' && renamingId !== node.id ? (
+          <span
+            className="tree-add"
+            title="新建子目录"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCreateSubfolder(node.id);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <Icon name="plus" size={13} stroke={1.6} />
+          </span>
+        ) : null}
       </div>
 
       {node.type === 'folder' && open && kids.length
@@ -167,6 +181,7 @@ function TreeNode({
               visibleIds={visibleIds}
               onActivate={onActivate}
               onToggle={onToggle}
+              onCreateSubfolder={onCreateSubfolder}
               onContextMenu={onContextMenu}
               onStartRename={onStartRename}
               onCommitRename={onCommitRename}
@@ -185,6 +200,7 @@ export default function SidebarTree({
   renamingId,
   onSelect,
   onToggle,
+  onCreateSubfolder,
   onContextMenu,
   onStartRename,
   onCommitRename,
@@ -353,6 +369,7 @@ export default function SidebarTree({
             visibleIds={visibleIds}
             onActivate={handleActivate}
             onToggle={onToggle}
+            onCreateSubfolder={onCreateSubfolder}
             onContextMenu={onContextMenu}
             onStartRename={onStartRename}
             onCommitRename={onCommitRename}

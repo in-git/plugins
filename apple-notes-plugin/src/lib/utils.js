@@ -93,7 +93,7 @@ export function readSelected() {
 
 export function readSidebarWidth() {
   try {
-    const value = Number(localStorage.getItem('notes-sidebar-width'));
+    const value = Number(localStorage.getItem('notes-sidebar-width-v2'));
     if (Number.isFinite(value) && value > 0) return value;
   } catch (err) {
     /* 忽略 */

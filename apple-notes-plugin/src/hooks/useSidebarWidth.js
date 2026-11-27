@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { readSidebarWidth } from '../lib/utils.js';
 
-const DEFAULT_WIDTH = 268;
+const DEFAULT_WIDTH = 320;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 480;
 
@@ -11,7 +11,7 @@ function clampWidth(value) {
 }
 
 function saveWidth(value) {
-  try { localStorage.setItem('notes-sidebar-width', String(value)); } catch (err) { /* 忽略 */ }
+  try { localStorage.setItem('notes-sidebar-width-v2', String(value)); } catch (err) { /* 忽略 */ }
 }
 
 /** 侧栏宽度：拖动分隔条调整、双击恢复默认，宽度持久化到 localStorage */

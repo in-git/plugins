@@ -1,0 +1,18 @@
+{
+  "name": "qr-code-extension",
+  "version": "1.0.9",
+  "private": true,
+  "type": "module",
+  "description": "Edge/Chrome 扩展：右键菜单生成二维码（屏幕居中弹窗）",
+  "scripts": {
+    "build": "node build.mjs",
+    "pack": "node bump-version.mjs && node build.mjs && node pack.mjs"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "sharp": "^0.35.5"
+  }
+}

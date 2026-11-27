@@ -1,11 +1,12 @@
 {
   "name": "img-inspector-extension",
-  "version": "1.0.40",
+  "version": "1.0.42",
   "private": true,
   "type": "module",
   "description": "Edge 扩展：React 实现的网页图片瀑布流探查器",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "pack": "node build.mjs && node pack.mjs"
   },
   "dependencies": {
     "cropperjs": "^1.6.1",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "esbuild": "0.24.2",
+    "sharp": "^0.35.5",
     "tailwindcss": "3.4.17"
   }
 }

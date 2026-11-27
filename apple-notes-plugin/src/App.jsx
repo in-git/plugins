@@ -79,8 +79,8 @@ export default function App() {
         onQueryChange={setSearchQuery}
         onSelect={store.selectNode}
         onToggle={store.toggleExpand}
-        onExpandAll={store.expandAll}
-        onCollapseAll={store.collapseAll}
+        onCreateDoc={() => store.createNode('doc', null)}
+        onCreateSubfolder={(folderId) => store.createNode('folder', folderId)}
         onContextMenu={openMenu}
         onBlankContextMenu={openBlankMenu}
         onStartRename={store.startRename}

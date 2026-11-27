@@ -2,7 +2,7 @@
 (() => {
   // src/content/core/constants.js
   var MAX_DEPTH = 12;
-  var EXT_VERSION = "1.19.31";
+  var EXT_VERSION = "1.19.35";
   var FEEDBACK_URL = "https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0";
   var PREVIEW_LIMIT = 60;
   var DOWNLOAD_STALL_TIMEOUT = 9e4;
@@ -27,7 +27,7 @@
   var MSE_DIRECT_REQUEST = "__video_inspector_mse_direct_request__";
   var MSE_DIRECT_RESPONSE = "__video_inspector_mse_direct_response__";
   var MANIFEST_FOUND = "__video_inspector_manifest_found__";
-  var MSE_COUNTDOWN_SEC = 5;
+  var MSE_DIRECT_PROGRESS = "__video_inspector_mse_direct_progress__";
   var CHUNK_BYTES = 512 * 1024;
   var MAX_CONCURRENT_DOWNLOADS = 1;
 
@@ -46,14 +46,9 @@
   var suppressClick = false;
   var integratingScanId = "";
   var scanLoading = false;
-  var dialogOffset = { x: 0, y: 0 };
-  var dragState = null;
   var areaMode = false;
   var areaStart = null;
   var areaToastTimer = null;
-  var mseCountdownTimer = 0;
-  // 倒计时按“该视频一次”计算：记录视频身份与截止时间，关窗/重开只续算剩余秒数
-  var mseCountdownState = { key: "", until: 0 };
   var refreshTimer = 0;
   var sizeCache = /* @__PURE__ */ new Map();
   var capturedResources = /* @__PURE__ */ new Map();
@@ -105,12 +100,6 @@
   function setScanLoading(value) {
     scanLoading = value;
   }
-  function setDialogOffset(value) {
-    dialogOffset = value;
-  }
-  function setDragState(value) {
-    dragState = value;
-  }
   function setAreaMode(value) {
     areaMode = value;
   }
@@ -120,36 +109,15 @@
   function setAreaToastTimer(value) {
     areaToastTimer = value;
   }
-  function setMseCountdownTimer(value) {
-    mseCountdownTimer = value;
-  }
-  function mseCountdownLeft() {
-    return Math.max(0, Math.ceil((mseCountdownState.until - Date.now()) / 1e3));
-  }
-  var MSE_COUNTDOWN_STORE = "vi-mse-countdown:";
-  function mseCountdownStoreKey() {
-    try { return MSE_COUNTDOWN_STORE + location.origin + location.pathname; } catch (_) { return MSE_COUNTDOWN_STORE; }
-  }
-  function readStoredMseCountdown() {
-    try {
-      const raw = sessionStorage.getItem(mseCountdownStoreKey());
-      if (!raw) return null;
-      const value = JSON.parse(raw);
-      return value && typeof value.key === "string" && Number(value.until) > 0 ? value : null;
-    } catch (_) { return null; }
-  }
-  function writeStoredMseCountdown(state) {
-    try { sessionStorage.setItem(mseCountdownStoreKey(), JSON.stringify(state)); } catch (_) {}
-  }
   function setRefreshTimer(value) {
     refreshTimer = value;
   }
 
   // src/content/core/i18n.js
   var I18N = {
-    "extName": "视频下载工具-吴文龙",
+    "extName": "文龙视频下载助手",
     "extDescription": "选中页面元素，以大气网格模态框展示其下所有视频。",
-    "actionTitle": "视频下载工具-吴文龙",
+    "actionTitle": "文龙视频下载助手",
     "contextMenuTitle": "下载页面视频",
     "badgeIdle": "探查",
     "badgeInspecting": "探查中：移动查看 · 单击选择视频区域 · Esc 退出",
@@ -162,7 +130,7 @@
     "badgeFound": "已探查到 $count$ 个视频",
     "badgeActiveShort": "探查中",
     "dialogTitle": "视频探查结果",
-    "kicker": "视频下载工具-吴文龙",
+    "kicker": "文龙视频下载助手",
     "countUnit": "个视频",
     "copyAll": "复制全部地址",
     "refresh": "扫描",
@@ -200,7 +168,6 @@
     "hoverVideoIndex": "video #$index$",
     "download": "下载",
     "downloadAll": "下载全部",
-    "msePreparing": "缓冲中 $sec$ 秒",
     "downloading": "下载中...",
     "downloadDone": "已下载",
     "completed": "已完成",
@@ -225,6 +192,7 @@
     "phaseDownloading": "下载中...",
     "phaseVerifying": "校验完整性...",
     "phaseMerging": "ffmpeg 合并中...",
+    "phaseWaiting": "等待完整视频流...",
     "errorIncomplete": "文件不完整",
     "errorDurationMismatch": "时长不匹配",
     "errorSeparated": "音视频分离，无法直接合并",
@@ -377,11 +345,9 @@
   padding: 32px 40px 26px;
   background: #fff;
   border-bottom: 1px solid #f5f5f7;
-  cursor: grab;
   user-select: none;
   -webkit-user-select: none;
 }
-.vi-head.dragging { cursor: grabbing; }
 .vi-title-wrap { flex: 1; min-width: 0; }
 .vi-kicker {
   margin-bottom: 9px;
@@ -965,8 +931,6 @@
   var areaTip = null;
   var areaToast = null;
   var modal = null;
-  var dialog = null;
-  var head = null;
   var numEl = null;
   var grid = null;
   var selectAll = null;
@@ -987,8 +951,6 @@
     areaTip = q(".vi-area-tip");
     areaToast = q(".vi-area-toast");
     modal = q(".vi-modal");
-    dialog = q(".vi-dialog");
-    head = q(".vi-head");
     numEl = q(".vi-count .num");
     grid = q(".vi-grid");
     selectAll = q(".vi-select-all");
@@ -1277,66 +1239,6 @@
         }));
       } catch (_) {
       }
-    });
-  }
-  function mseResourceKey(items) {
-    const audio = items.find((r) => r && r.source === "mse-audio" && (Number(r.size) || 0) > 1024);
-    const video = items.find((r) => r && r.source === "mse-video" && (Number(r.size) || 0) > 1024);
-    if (!audio || !video) return "";
-    return String(audio.id || audio.url || "") + "|" + String(video.id || video.url || "");
-  }
-  // 视频身份用“页面路径 + 播放器当前地址”，而不是 MSE 资源 id——
-  // 后者会随新分片到达而变化，导致同一视频每次打开都被当成新任务重新倒计时
-  function mseMediaKey(items) {
-    const resKey = mseResourceKey(items);
-    if (!resKey) return "";
-    const withEl = items.find((it) => it && it.el && (it.el.currentSrc || it.el.src));
-    const media = withEl ? String(withEl.el.currentSrc || withEl.el.src || "") : "";
-    let pagePath = "";
-    try { pagePath = location.origin + location.pathname; } catch (_) {}
-    return pagePath + "|" + String(media || resKey).slice(0, 300);
-  }
-  function maybeStartMseCountdown(items) {
-    const key = mseMediaKey(items);
-    if (!key) return;
-    const now = Date.now();
-    if (mseCountdownState.key !== key) {
-      // 换了视频才重新起 5 秒窗口；同一视频沿用已记录的截止时间（含刷新页面后的续算）
-      const stored = readStoredMseCountdown();
-      if (stored && stored.key === key) {
-        mseCountdownState = { key, until: Number(stored.until) };
-      } else {
-        mseCountdownState = { key, until: now + MSE_COUNTDOWN_SEC * 1e3 };
-        writeStoredMseCountdown(mseCountdownState);
-      }
-    }
-    if (now >= mseCountdownState.until) {
-      if (mseCountdownTimer) {
-        clearInterval(mseCountdownTimer);
-        setMseCountdownTimer(0);
-      }
-      return;
-    }
-    ensureMseCountdownTimer();
-  }
-  function ensureMseCountdownTimer() {
-    if (mseCountdownTimer) return;
-    if (mseCountdownLeft() <= 0) return;
-    if (!modal || modal.hidden) return;
-    mseCountdownTick();
-    setMseCountdownTimer(setInterval(mseCountdownTick, 1e3));
-  }
-  function mseCountdownTick() {
-    const left = mseCountdownLeft();
-    if (left <= 0) {
-      if (mseCountdownTimer) clearInterval(mseCountdownTimer);
-      setMseCountdownTimer(0);
-      refreshDownloadButtons();
-      return;
-    }
-    shadow.querySelectorAll('[data-action="download"], [data-action="download-all"]').forEach((btn) => {
-      btn.disabled = true;
-      btn.textContent = t("msePreparing", { sec: left });
     });
   }
   function blobToChunks(blob, id, stream) {
@@ -1720,40 +1622,11 @@
   }
 
   // src/content/features/modal.js
-  function applyDialogOffset() {
-    if (!dialog) return;
-    dialog.style.transform = dialogOffset.x || dialogOffset.y ? "translate(" + dialogOffset.x + "px, " + dialogOffset.y + "px)" : "";
-  }
-  function clampDialogOffset(x, y) {
-    const w = dialog ? dialog.offsetWidth || 1 : 1;
-    const h = dialog ? dialog.offsetHeight || 1 : 1;
-    const baseLeft = (window.innerWidth - w) / 2;
-    const baseTop = (window.innerHeight - h) / 2;
-    const clamp = (value, min, max) => min > max ? 0 : Math.max(min, Math.min(value, max));
-    return {
-      x: clamp(x, 60 - w - baseLeft, window.innerWidth - 60 - baseLeft),
-      y: clamp(y, 40 - h - baseTop, window.innerHeight - 40 - baseTop)
-    };
-  }
-  function resetDialogPosition() {
-    setDialogOffset({ x: 0, y: 0 });
-    setDragState(null);
-    if (!dialog) return;
-    dialog.style.animation = "";
-    applyDialogOffset();
-  }
   function openModal(root) {
     if (!root || !root.isConnected) root = document.body || document.documentElement;
     setCache(/* @__PURE__ */ new WeakMap());
     setPicked(root);
-    if (mseCountdownTimer) {
-      clearInterval(mseCountdownTimer);
-      setMseCountdownTimer(0);
-    }
     modal.hidden = false;
-    resetDialogPosition();
-    // 关窗期间倒计时按墙钟继续走，重开只补剩余秒数；已走完则直接可下载
-    ensureMseCountdownTimer();
     if (numEl) numEl.textContent = "0";
     if (selectAll) selectAll.checked = true;
     updateScanModeUi();
@@ -1774,10 +1647,6 @@
     modal.hidden = true;
     setIntegratingScanId("");
     setScanLoading(false);
-    if (mseCountdownTimer) {
-      clearInterval(mseCountdownTimer);
-      setMseCountdownTimer(0);
-    }
     if (deepScanTimer) clearTimeout(deepScanTimer);
     if (capturePollTimer) clearInterval(capturePollTimer);
     grid.querySelectorAll(".vi-thumb, video").forEach((el) => {
@@ -2064,7 +1933,6 @@
     else if (action === "feedback") window.open(FEEDBACK_URL, "_blank", "noopener,noreferrer");
     else if (action === "refresh" || action === "search") runSearch();
     else if (action === "download-all") {
-      if (mseCountdownLeft() > 0) return;
       currentItems.filter((item) => item.selected).forEach((item) => startDownload(item));
     } else if (action === "dl-pause") {
       pauseAllDownloads();
@@ -2077,7 +1945,6 @@
     } else if (action === "queue-close") {
       toggleQueuePanel(false);
     } else if (action === "download") {
-      if (mseCountdownLeft() > 0) return;
       const item = currentItems[index];
       if (item) startDownload(item);
     } else if (action === "copy-all") {
@@ -2209,7 +2076,6 @@
   }
   function openAreaModal(videos) {
     modal.hidden = false;
-    resetDialogPosition();
     if (numEl) numEl.textContent = "0";
     if (selectAll) selectAll.checked = true;
     setScanMode("normal");
@@ -2489,7 +2355,7 @@
       }
     });
   }
-  function requestMseDirectMux(filename, onProgress, matchUrl) {
+  function requestMseDirectMux(filename, onProgress, matchUrl, waitComplete) {
     const id = "msedirect-" + ++counters.download;
     return new Promise((resolve) => {
       let settled = false;
@@ -2499,6 +2365,7 @@
         settled = true;
         clearTimeout(timer);
         document.removeEventListener(MSE_DIRECT_RESPONSE, onResponse, true);
+        document.removeEventListener(MSE_DIRECT_PROGRESS, onMseProgress, true);
         resolve(value);
       };
       const onResponse = (event) => {
@@ -2510,12 +2377,24 @@
         }
         if (data && data.id === id) finish(data);
       };
+      const onMseProgress = (event) => {
+        let data;
+        try {
+          data = JSON.parse(event.detail);
+        } catch (_) {
+          return;
+        }
+        if (!onProgress || !data || data.id !== id || typeof data.percent !== "number") return;
+        onProgress(data.percent, data.phase || (waitComplete ? "waiting" : "merging"), data);
+      };
       document.addEventListener(MSE_DIRECT_RESPONSE, onResponse, true);
-      if (onProgress) onProgress(0, "merging");
-      timer = setTimeout(() => finish({ ok: false, error: "MSE 直连合并超时" }), 4 * 60 * 1e3);
+      document.addEventListener(MSE_DIRECT_PROGRESS, onMseProgress, true);
+      if (onProgress) onProgress(0, waitComplete ? "waiting" : "merging", { note: "准备完整视频流" });
+      // 完整流等待最长 15 分钟，ffmpeg 合并最长 20 分钟，外层再留余量避免提前判失败。
+      timer = setTimeout(() => finish({ ok: false, error: "MSE 直连合并超时" }), waitComplete ? 40 * 60 * 1e3 : 4 * 60 * 1e3);
       try {
         document.dispatchEvent(new CustomEvent(MSE_DIRECT_REQUEST, {
-          detail: JSON.stringify({ id, filename, matchUrl })
+          detail: JSON.stringify({ id, filename, matchUrl, waitComplete: !!waitComplete })
         }));
       } catch (_) {
         finish({ ok: false, error: "MSE 直连派发失败" });
@@ -2548,6 +2427,7 @@
       if (data) {
         if (typeof data.loaded === "number") task.loaded = data.loaded;
         if (typeof data.total === "number" && data.total > 0) task.total = data.total;
+        task.progressNote = data.note ? String(data.note) : "";
       }
       if (phase && task.phaseText !== phase) task.phaseText = phase;
       scheduleRefresh();
@@ -2577,7 +2457,7 @@
     }
   }
   function startDownload(item) {
-    if (!item || mseCountdownLeft() > 0) return null;
+    if (!item) return null;
     const key = itemKey(item);
     const prev = downloadTasks.get(key);
     if (prev && (prev.phase === "downloading" || prev.phase === "queued")) return prev;
@@ -2667,13 +2547,17 @@
     });
     refreshDownloadButtons();
   }
+  function activeStatusText(task) {
+    const phaseKey = task.phaseText === "waiting" ? "phaseWaiting" : task.phaseText === "merging" ? "phaseMerging" : task.phaseText === "verifying" ? "phaseVerifying" : task.phaseText === "resolving" ? "phaseResolving" : "";
+    const pct = task.percent > 0 ? " " + Math.min(100, Math.round(task.percent)) + "%" : "";
+    return phaseKey ? t(phaseKey) + pct : t("downloading") + pct;
+  }
   function taskStatusText(task) {
     if (task.phase === "done") return t("downloadDone");
     if (task.phase === "queued") return t("queuedText");
     if (task.phase === "paused") return t("resumeText", { percent: task.percent || 0 });
     if (task.phase === "failed") return t("downloadFailed");
-    const phaseKey = task.phaseText === "merging" ? "phaseMerging" : task.phaseText === "verifying" ? "phaseVerifying" : task.phaseText === "resolving" ? "phaseResolving" : "";
-    return phaseKey ? t(phaseKey) : t("downloading") + (task.percent ? " " + task.percent + "%" : "");
+    return activeStatusText(task);
   }
   function renderQueueList(tasks) {
     const panel = shadow.querySelector(".vi-queue-panel");
@@ -2700,6 +2584,7 @@
       const stateClass = task.phase === "done" ? "is-done" : task.phase === "failed" ? "is-failed" : task.phase === "downloading" ? "is-active" : "";
       state.className = "vi-queue-state " + stateClass;
       state.textContent = taskStatusText(task);
+      if (task.progressNote) state.title = task.progressNote;
       top.append(name, state);
       if (task.phase !== "done") {
         const cancel = document.createElement("button");
@@ -2787,14 +2672,8 @@
       if (!card) return;
       const button = card.querySelector('[data-action="download"]');
       if (button) {
-        const countdownLeft = mseCountdownLeft();
-        if (countdownLeft > 0) {
-          button.disabled = true;
-          button.textContent = t("msePreparing", { sec: countdownLeft });
-        } else if (task && task.phase === "downloading") {
-          const phaseKey = task.phaseText === "merging" ? "phaseMerging" : task.phaseText === "verifying" ? "phaseVerifying" : task.phaseText === "resolving" ? "phaseResolving" : null;
-          const label = phaseKey ? t(phaseKey) : t("downloading") + (task.percent ? " " + task.percent + "%" : "");
-          setButtonLoading(button, true, label);
+        if (task && task.phase === "downloading") {
+          setButtonLoading(button, true, activeStatusText(task));
         } else {
           setButtonLoading(button, false);
           if (task && task.phase === "done") button.textContent = t("downloadDone");
@@ -2814,18 +2693,12 @@
     });
     const allButton = shadow.querySelector('[data-action="download-all"]');
     if (allButton) {
-      const allCountdownLeft = mseCountdownLeft();
-      if (allCountdownLeft > 0) {
-        allButton.disabled = true;
-        allButton.textContent = t("msePreparing", { sec: allCountdownLeft });
-      } else {
-        let active2 = 0;
-        downloadTasks.forEach((t2) => {
-          if (t2.phase === "downloading") active2++;
-        });
-        if (active2 > 0) setButtonLoading(allButton, true, t("downloading"));
-        else setButtonLoading(allButton, false);
-      }
+      let active2 = 0;
+      downloadTasks.forEach((t2) => {
+        if (t2.phase === "downloading") active2++;
+      });
+      if (active2 > 0) setButtonLoading(allButton, true, t("downloading"));
+      else setButtonLoading(allButton, false);
     }
     renderDownloadSummary();
   }
@@ -2927,10 +2800,8 @@
     const candidates = buildCandidates(item, task);
     const errors = [];
     const pageUrl = task && task.pageUrl || location.href;
-    if (!task || !task.cancelled) {
-      const mseResult = await requestMseDirectMux(filename, onProgress, item.src);
-      if (mseResult && mseResult.ok) return true;
-    }
+    // 先把远端音视频流完整下载下来，合并交给 downloader 在下载结束后执行。
+    // MSE 分流只有已缓冲的部分，不能再抢在下载前面，否则点一下就把半截文件合成了。
     for (const candidate of candidates) {
       if (task && task.cancelled) return false;
       let result;
@@ -2959,6 +2830,12 @@
         return true;
       }
       if (result && result.error && result.error) errors.push(result.error);
+    }
+    // 所有远端候选都失败，才用 MSE 分流兜底；且必须等流真正结束才合并，保证完整。
+    if (!task || !task.cancelled) {
+      const mseResult = await requestMseDirectMux(filename, onProgress, item.src, true);
+      if (mseResult && mseResult.ok) return true;
+      if (mseResult && mseResult.error) errors.push(mseResult.error);
     }
     if (task) task.lastError = errors[errors.length - 1] || t("errorNoSource");
     return false;
@@ -3019,45 +2896,6 @@
         if (!modal.hidden) runSearch();
       });
     });
-    if (head && dialog) {
-      head.addEventListener("pointerdown", (event) => {
-        if (event.button !== 0) return;
-        if (event.target.closest("button, input, select, a")) return;
-        dialog.style.animation = "none";
-        setDragState({
-          id: event.pointerId,
-          startX: event.clientX,
-          startY: event.clientY,
-          offsetX: dialogOffset.x,
-          offsetY: dialogOffset.y
-        });
-        try {
-          head.setPointerCapture(event.pointerId);
-        } catch (_) {
-        }
-        head.classList.add("dragging");
-        event.preventDefault();
-      });
-      head.addEventListener("pointermove", (event) => {
-        if (!dragState || event.pointerId !== dragState.id) return;
-        setDialogOffset(clampDialogOffset(
-          dragState.offsetX + event.clientX - dragState.startX,
-          dragState.offsetY + event.clientY - dragState.startY
-        ));
-        applyDialogOffset();
-      });
-      const stopDrag = (event) => {
-        if (!dragState || event.pointerId !== dragState.id) return;
-        setDragState(null);
-        head.classList.remove("dragging");
-        try {
-          head.releasePointerCapture(event.pointerId);
-        } catch (_) {
-        }
-      };
-      head.addEventListener("pointerup", stopDrag);
-      head.addEventListener("pointercancel", stopDrag);
-    }
     if (selectAll) {
       selectAll.addEventListener("change", () => {
         currentItems.forEach((item) => {
@@ -3105,7 +2943,6 @@
       }
       if (!data || !Array.isArray(data.items)) return;
       applyCapturedResources(data.items);
-      maybeStartMseCountdown(data.items);
     });
     document.addEventListener(SCAN_RESULT, (event) => {
       let data;

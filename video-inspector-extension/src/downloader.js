@@ -20,6 +20,7 @@
   const MUX_RESPONSE = '__video_inspector_mux_response__';
   const MSE_DIRECT_REQUEST = '__video_inspector_mse_direct_request__';
   const MSE_DIRECT_RESPONSE = '__video_inspector_mse_direct_response__';
+  const MSE_DIRECT_PROGRESS = '__video_inspector_mse_direct_progress__';
   const MANIFEST_FOUND = '__video_inspector_manifest_found__';
   const controllers = new Map();
   const jobLocks = new Map();
@@ -222,9 +223,44 @@
     document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(detail) }));
   }
 
+  function fireMseProgress(id, percent, phase, note) {
+    fire(MSE_DIRECT_PROGRESS, {
+      id: id,
+      percent: Math.max(0, Math.min(100, Math.round(Number(percent) || 0))),
+      phase: phase || 'waiting',
+      note: String(note || '')
+    });
+  }
+
+  function formatBytes(n) {
+    n = Number(n) || 0;
+    if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+    return n + ' B';
+  }
+
+  // 用播放器的 buffered 估算完整流已缓冲比例，等待期也能显示真实进度。
+  function mseBufferedRatio(matchUrl) {
+    try {
+      const clean = (u) => String(u || '').split('?')[0];
+      const videos = Array.from(document.querySelectorAll('video'));
+      for (const el of videos) {
+        const src = String(el.currentSrc || el.src || '');
+        if (!src || (src !== matchUrl && clean(src) !== clean(matchUrl))) continue;
+        const duration = Number(el.duration) || 0;
+        const buffered = el.buffered;
+        if (duration > 0 && buffered && buffered.length) {
+          return Math.max(0, Math.min(1, buffered.end(buffered.length - 1) / duration));
+        }
+      }
+    } catch (_) {}
+    return 0;
+  }
+
   // 经 content(隔离世界) -> background -> offscreen 用 ffmpeg 合并。
   // 成功时 offscreen 已直接触发下载，这里只回传状态；blob 不序列化，用 CustomEvent detail 对象引用传递。
-  function muxViaOffscreen(id, videoBlob, audioBlob, filename) {
+  function muxViaOffscreen(id, videoBlob, audioBlob, filename, timeoutMs) {
     return new Promise((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
@@ -232,7 +268,7 @@
         settled = true;
         document.removeEventListener(MUX_RESPONSE, onResponse);
         reject(new Error('offscreen mux timeout'));
-      }, 180000);
+      }, Number(timeoutMs) > 0 ? Number(timeoutMs) : 180000);
       function onResponse(event) {
         const data = event.detail;
         if (!data || data.id !== id) return;
@@ -655,7 +691,8 @@
       return true;
     };
     // 诊断用：把攒到的 MSE 音视频分流送进 offscreen ffmpeg 合并，直接下载 MP4
-    window.__viMseMuxTest = async function (customFilename, forcedMuxId, matchUrl) {
+    window.__viMseMuxTest = async function (customFilename, forcedMuxId, matchUrl, waitComplete, progressId) {
+      const reportId = progressId || forcedMuxId || '';
       // 关键：按视频的 blob URL（matchUrl）精确匹配分片，A/B 两个视频同时存在时不会串台。
       // 控制台直接调用时没传 matchUrl，退回“最近创建的一组”保持原诊断行为。
       const createdAt = (entry) => {
@@ -683,12 +720,52 @@
         a = a || fallback('mse-audio');
         v = v || fallback('mse-video');
       }
-      if (!a || !v) {  return false; }
+      if (!a || !v) {
+        fireMseProgress(reportId, 0, 'waiting', '未找到可合并的音视频分片');
+        return false;
+      }
+      if (waitComplete) {
+        // 必须先拿到完整流再合并：等 endOfStream / 播放器缓冲到结尾，期间持续刷新分片快照。
+        // 完成标记写在 vault 条目上，避免 mseStates 的 15 分钟清理造成“未结束却被当完成”。
+        const deadline = Date.now() + 15 * 60 * 1000;
+        let bufferedDone = false;
+        let lastReport = 0;
+        const isComplete = (entry) => {
+          if (!entry) return false;
+          if (entry.finalized) return true;
+          const state = mseStates.get(entry.id);
+          if (state && state.finalized) return true;
+          return bufferedDone;
+        };
+        for (;;) {
+          bufferedDone = mseBufferedRatio(matchUrl) >= 0.995;
+          if (isComplete(a) && isComplete(v)) break;
+          if (Date.now() >= deadline) {
+            fireMseProgress(reportId, 90, 'waiting', '等待完整视频流超时');
+            return false;
+          }
+          await new Promise((r) => setTimeout(r, 500));
+          const freshA = pick('mse-audio');
+          const freshV = pick('mse-video');
+          if (freshA && freshV) { a = freshA; v = freshV; }
+          const now = Date.now();
+          if (now - lastReport >= 500) {
+            lastReport = now;
+            const bytes = (a.blob ? a.blob.size : 0) + (v.blob ? v.blob.size : 0);
+            const ratio = mseBufferedRatio(matchUrl);
+            const percent = Math.min(90, Math.round(ratio * 90));
+            fireMseProgress(reportId, percent, 'waiting',
+              '已缓存 ' + formatBytes(bytes) + (ratio > 0 ? ' · 缓冲 ' + Math.round(ratio * 100) + '%' : ''));
+          }
+        }
+      }
       const base = String(customFilename || 'youtube-mse-mux').replace(/\.[^.]+$/, '').slice(0, 80) || 'youtube-mse-mux';
       const fname = base + '.mp4';
+      fireMseProgress(reportId, 92, 'merging', '开始合并音视频');
       try {
         const muxId = forcedMuxId || ('mse-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
-        const r = await muxViaOffscreen(muxId, v.blob, a.blob, fname);
+        await muxViaOffscreen(muxId, v.blob, a.blob, fname, 20 * 60 * 1000);
+        fireMseProgress(reportId, 100, 'merging', '合并完成');
         return true;
       } catch (e) {
         return false;
@@ -708,7 +785,7 @@
       return;
     }
     try {
-      const ok = await window.__viMseMuxTest(detail.filename, id, detail.matchUrl);
+      const ok = await window.__viMseMuxTest(detail.filename, id, detail.matchUrl, !!detail.waitComplete, id);
       fire(MSE_DIRECT_RESPONSE, { id, ok: !!ok, downloaded: !!ok });
     } catch (e) {
       fire(MSE_DIRECT_RESPONSE, { id, ok: false, error: String(e && e.message || e) });
@@ -728,6 +805,8 @@
           const state = mseStates.get(id);
           if (!state) return;
           state.finalized = true;
+          const entry = vault.find((item) => item && item.id === id);
+          if (entry) entry.finalized = true;
           clearInterval(state.timer);
           state.update();
         }), 300);
@@ -796,6 +875,8 @@
       setTimeout(() => {
         if (state.finalized) return;
         state.finalized = true;
+        const entry = vault.find((item) => item && item.id === id);
+        if (entry) entry.finalized = true;
         clearInterval(state.timer);
         update();
         mseStates.delete(id);

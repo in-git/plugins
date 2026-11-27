@@ -1,4 +1,12 @@
-*.zip
+# 所有层级的构建产物
+**/dist/
+**/releases/
+**/*.zip
 node_modules/
-dist/
 uploads/
+
+# 临时脚本
+_resize.mjs
+_check.mjs
+_check_img.mjs
+*.ps1

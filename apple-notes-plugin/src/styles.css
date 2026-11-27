@@ -42,6 +42,8 @@
 
   body {
     @apply overflow-hidden bg-canvas text-lead text-ink;
+    font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei',
+      'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', Arial, sans-serif;
   }
 
   ::selection {
@@ -115,11 +117,6 @@
     @apply bg-accent-soft font-medium text-ink;
   }
 
-  .tree-item.is-active::after {
-    content: '';
-    @apply pointer-events-none absolute bottom-2 left-0 top-2 w-[2px] rounded-full bg-accent;
-  }
-
   /* 拖拽中的源行 */
   .tree-item.is-dragging {
     @apply bg-ink/[0.04] opacity-45;
@@ -172,6 +169,18 @@
 
   .tree-title {
     @apply min-w-0 flex-1 truncate;
+  }
+
+  /* 文件夹行右侧的「新建子目录」，悬停时显示 */
+  .tree-add {
+    @apply flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-muted
+      opacity-0 transition-opacity duration-100 hover:bg-ink/[0.08] hover:text-ink;
+  }
+
+  .tree-item:hover .tree-add,
+  .tree-item.is-active .tree-add,
+  .tree-item:focus-within .tree-add {
+    @apply opacity-100;
   }
 
   .tree-rename {

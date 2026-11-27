@@ -176,7 +176,7 @@ async function muxOnce(ff, videoBuf, audioBuf) {
     );
   } catch (e) {
     const msg = String((e && e.message) || e);
-    if (/exit\(0\)|Program terminated with exit|^\s*0\s*$/i.test(msg)) {
+    if (/exit\(0\)|^\s*0\s*$/i.test(msg)) {
       exitStatusSeen = true;
     } else {
       aacFailed = true;
@@ -196,7 +196,7 @@ async function muxOnce(ff, videoBuf, audioBuf) {
       );
     } catch (e) {
       const msg = String((e && e.message) || e);
-      if (/exit\(0\)|Program terminated with exit|^\s*0\s*$/i.test(msg)) exitStatusSeen = true;
+      if (/exit\(0\)|^\s*0\s*$/i.test(msg)) exitStatusSeen = true;
       else throw new Error('ffmpeg run failed: ' + msg + '\n' + logBuffer.slice(-25).join('\n'));
     }
   }
