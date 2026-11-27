@@ -472,16 +472,14 @@
         ? engine.referrerMeta(pageUrl, data.url, null, '') : null;
       engine.inspectManifestUrl(data.url, meta).then((info) => {
         if (!info || !info.ok) {
-          console.warn('[VI-SNIFF] manifest unusable', data.url.slice(0, 160), info && info.error);
           return;
         }
-        console.log('[VI-SNIFF] manifest', { kind: info.kind, hasAudioTrack: info.hasAudioTrack, url: data.url.slice(0, 160) });
         if (info.hasAudioTrack) {
           const key = resourceKey(data.url);
           const prev = pageResourceEntries.get(key);
           if (prev) pageResourceEntries.set(key, Object.assign({}, prev, { hasAudioTrack: true }));
         }
-      }).catch((e) => console.warn('[VI-SNIFF] inspect failed', String(e && e.message || e)));
+      }).catch((e) => {});
     }
   });
 
@@ -633,21 +631,18 @@
     window.__viMseDump = function () {
       const out = vault.filter((item) => item && /^mse-(audio|video)$/.test(item.source || '') && item.blob)
         .map((item) => ({ id: item.id, source: item.source, size: item.blob.size, type: item.type }));
-      console.log('[VI-MSE-DIAG] entries', JSON.stringify(out));
       return out;
     };
     window.__viDownloadMseAudio = async function () {
       const entries = vault.filter((item) => item && item.source === 'mse-audio' && item.blob && item.blob.size > 1024)
         .sort((a, b) => b.blob.size - a.blob.size);
       const entry = entries[0];
-      if (!entry) { console.warn('[VI-MSE-DIAG] no audio MSE blob yet'); return false; }
+      if (!entry) {  return false; }
       const head = new Uint8Array(await entry.blob.slice(0, 32).arrayBuffer());
-      const hex = Array.from(head).map((b) => b.toString(16).padStart(2, '0')).join(' ');
       let ext = 'bin';
       if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) ext = 'webm';
       else if ((head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) ||
                (head[8] === 0x66 && head[9] === 0x74 && head[10] === 0x79 && head[11] === 0x70)) ext = 'm4a';
-      console.log('[VI-MSE-DIAG] audio head', hex, 'size', entry.blob.size, 'type', entry.type, 'entries', entries.length);
       saveHref(URL.createObjectURL(entry.blob), 'youtube-audio.' + ext);
       return true;
     };
@@ -655,10 +650,7 @@
       const entries = vault.filter((item) => item && item.source === 'mse-video' && item.blob && item.blob.size > 1024)
         .sort((a, b) => b.blob.size - a.blob.size);
       const entry = entries[0];
-      if (!entry) { console.warn('[VI-MSE-DIAG] no video MSE blob yet'); return false; }
-      const head = new Uint8Array(await entry.blob.slice(0, 32).arrayBuffer());
-      const hex = Array.from(head).map((b) => b.toString(16).padStart(2, '0')).join(' ');
-      console.log('[VI-MSE-DIAG] video head', hex, 'size', entry.blob.size, 'type', entry.type, 'entries', entries.length);
+      if (!entry) {  return false; }
       saveHref(URL.createObjectURL(entry.blob), 'youtube-video.mp4');
       return true;
     };
@@ -691,17 +683,14 @@
         a = a || fallback('mse-audio');
         v = v || fallback('mse-video');
       }
-      if (!a || !v) { console.warn('[VI-MSE-DIAG] need both audio+video MSE blobs', !!a, !!v, 'matchUrl', matchUrl); return false; }
+      if (!a || !v) {  return false; }
       const base = String(customFilename || 'youtube-mse-mux').replace(/\.[^.]+$/, '').slice(0, 80) || 'youtube-mse-mux';
       const fname = base + '.mp4';
-      console.log('[VI-MSE-DIAG] mux(ffmpeg offscreen) start', { audio: a.blob.size, video: v.blob.size, at: a.type, vt: v.type, file: fname, aid: a.id, vid: v.id });
       try {
         const muxId = forcedMuxId || ('mse-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
         const r = await muxViaOffscreen(muxId, v.blob, a.blob, fname);
-        console.log('[VI-MSE-DIAG] mux ok', r);
         return true;
       } catch (e) {
-        console.warn('[VI-MSE-DIAG] mux failed', String(e && e.message || e));
         return false;
       }
     };
@@ -756,7 +745,6 @@
       const diagBuf = { mimeType: mt, calls: 0, bytes: 0, role };
       mseDiag.buffers.push(diagBuf);
       mseDiag.addCalls++;
-      console.log('[VI-MSE-DIAG] addSourceBuffer', mt, '=>', role);
       const matchUrl = objectUrlTargets.get(this) || '';
       const state = { finalized: false, timer: 0, update: null, role };
       const update = () => {
@@ -803,7 +791,6 @@
       } catch (_) {}
       state.timer = setInterval(update, 1500);
       const diagTimer = setInterval(() => {
-        console.log('[VI-MSE-DIAG] summary', JSON.stringify(mseDiag.summary()));
       }, 5000);
       setTimeout(() => { clearInterval(diagTimer); }, 5 * 60 * 1000);
       setTimeout(() => {
@@ -846,7 +833,6 @@
             items = Array.from(byKey.values());
           }
         } catch (e) {
-          console.warn('[VI-AUDIO] extractFromPage failed', e);
         }
       }
       fire(SCAN_RESULT, { id, items: items.slice(0, 300) });
@@ -964,11 +950,6 @@
     let url = payload.url;
     let videoUrl = payload.videoUrl;
     let audioUrl = payload.audioUrl;
-    console.log('[VI-AUDIO] request', {
-      id, forceKind: forceKind || '', url: String(url || '').slice(0, 160),
-      videoUrl: String(videoUrl || '').slice(0, 120), audioUrl: String(audioUrl || '').slice(0, 120),
-      qualityId: payload.qualityId || ''
-    });
 
     if (!engine) {
       fire(RESPONSE, { id, ok: false, error: 'download engine unavailable', validated: false });
@@ -995,11 +976,6 @@
           ? engine.referrerMeta(payload.pageUrl || '', url || '', null, '')
           : null;
         const resolved = await engine.resolvePlatform(url, payload.pageUrl, payload.qualityId, resolvedMeta || undefined);
-        console.log('[VI-AUDIO] platform resolved', {
-          kind: resolved && resolved.kind,
-          videoUrl: String((resolved && resolved.videoUrl) || '').slice(0, 160),
-          audioUrl: String((resolved && resolved.audioUrl) || '').slice(0, 160)
-        });
         if (resolved && resolved.videoUrl) {
           kind = resolved.kind;
           payload.videoUrl = resolved.videoUrl;
@@ -1032,7 +1008,6 @@
         try {
           r = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg, rangedMeta);
         } catch (e) {
-          console.warn('[VI-AUDIO] audio ranged fetch failed, retry plain', String(e && e.message || e));
           r = await engine.fetchWhole(audioUrl, controller.signal, onProgress, dlArg, dlMeta || undefined);
         }
         const blob = r && r.tracks && r.tracks[0];
@@ -1040,7 +1015,6 @@
         if (!blob || blob.size < 1024 || /html|json|javascript|xml|text\//.test(type)) {
           throw new Error('audio track is not media: type=' + type + ' bytes=' + ((blob && blob.size) || 0));
         }
-        console.log('[VI-AUDIO] audio fetched', { bytes: blob.size, type });
         return r;
       };
 
@@ -1098,7 +1072,7 @@
           const seq = track.chunks++;
           return chunkPut({ id: job.id + ':' + role + ':' + seq, jobId: job.id, role, seq, blob: new Blob(parts) })
             .then(() => jobPut(job))
-            .catch((e) => console.warn('[VI-DL] persist chunk failed', e));
+            .catch((e) => {});
         };
         return {
           track,
@@ -1139,7 +1113,6 @@
           const done = await chunksFor(job.id, 'main');
           const storedBytes = done.reduce((sum, p) => sum + ((p.blob && p.blob.size) || 0), 0);
           if (done.length && storedBytes === prev.loaded) {
-            console.log('[VI-DL] reuse completed chunks', done.length, 'bytes', prev.loaded);
             const ext = /webm/i.test(prev.contentType || '') ? 'webm' : 'mp4';
             return {
               blob: new Blob(done.map((p) => p.blob), { type: prev.contentType || 'video/mp4' }),
@@ -1158,7 +1131,6 @@
           }
           const sink = createSink('main', targetUrl, resumeTrack);
           const base = resumeTrack ? resumeTrack.loaded : 0;
-          if (resumeTrack) console.log('[VI-DL] resume from', base, '/', resumeTrack.total);
           const meta2 = Object.assign({}, metaArg || {}, {
             resume: resumeTrack ? {
               loaded: base,
@@ -1184,7 +1156,6 @@
             await sink.flush().catch(() => {});
             const message = String(e && e.message || e);
             if (attempt === 0 && resumeTrack && /resume unsupported|unexpected range|HTTP 41[56]/.test(message)) {
-              console.warn('[VI-DL] resume invalid, restart from 0', message);
               resumeTrack = null;
               continue;
             }
@@ -1203,11 +1174,8 @@
         let a = null;
         if (payload.audioUrl) {
           try { a = await fetchAudioTrack(payload.audioUrl); }
-          catch (e) { console.warn('[VI-AUDIO] audio fetch failed', String(e && e.message || e)); a = null; }
-        } else {
-          console.warn('[VI-AUDIO] streams without audioUrl -> will be silent');
+          catch (e) {  a = null; }
         }
-        console.log('[VI-AUDIO] streams fetched', { videoBytes: (v.blob && v.blob.size) || 0, audioBytes: (a && a.tracks[0] && a.tracks[0].size) || 0 });
         if (payload.audioUrl && !a) throw new Error('audio track unavailable');
         result = {
           tracks: a ? [v.blob, a.tracks[0]] : [v.blob],
@@ -1218,9 +1186,7 @@
         let a = null;
         if (audioUrl) {
           try { a = await fetchAudioTrack(audioUrl); }
-          catch (e) { console.warn('[VI-AUDIO] audio fetch failed', String(e && e.message || e)); a = null; }
-        } else {
-          console.warn('[VI-AUDIO] streams without audioUrl -> will be silent');
+          catch (e) {  a = null; }
         }
         if (audioUrl && !a) throw new Error('audio track unavailable');
         result = {
@@ -1239,7 +1205,6 @@
       let finalExt = result.ext || 'mp4';
       let separateSaved = false;
       let offscreenDone = false;
-      console.log('[VI-AUDIO] result', { kind, trackCount: tracks.length, ext: finalExt, sizes: tracks.map((t) => t && t.size || 0) });
 
       if (tracks.length > 1) {
         fire(PROGRESS, { id, loaded: 0, total: 100, percent: 0, phase: 'merging' });
@@ -1260,7 +1225,6 @@
             if (!vp.hasVideo && buffers.length > 1) {
               const second = await engine.probeTracks(buffers[1]);
               if (second && second.hasVideo) {
-                console.warn('[VI-AUDIO] swap tracks: first is audio, second is video');
                 const tmpBuf = buffers[0];
                 buffers[0] = buffers[1];
                 buffers[1] = tmpBuf;
@@ -1271,17 +1235,14 @@
               }
             }
             needMerge = !vp.hasAudio;
-            console.log('[VI-AUDIO] probe video track', vp);
-          } catch (e) { console.warn('[VI-AUDIO] probe failed', e); needMerge = true; }
+          } catch (e) {  needMerge = true; }
         }
         if (!needMerge) {
-          console.warn('[VI-AUDIO] skip merge: source video already has audio');
           finalBlob = tracks[0];
           finalExt = result.ext || 'mp4';
         } else {
           try {
             const muxBase = String(filename || 'video').replace(/\.[^.]+$/, '') + '.mp4';
-            console.log('[VI-AUDIO] trying offscreen ffmpeg mux');
             const muxHeartbeat = setInterval(() => {
               fire(PROGRESS, { id, loaded: 0, total: 100, percent: 0, phase: 'merging' });
             }, 15000);
@@ -1295,9 +1256,7 @@
             }
             offscreenDone = !!muxResult.downloaded && muxResult.hasAudio !== false;
             if (!offscreenDone) throw new Error('offscreen mux result has no audio');
-            console.log('[VI-AUDIO] offscreen mux ok, bytes', muxResult.size);
           } catch (muxError) {
-            console.warn('[VI-AUDIO] offscreen mux failed, fallback to MP4Box', muxError);
           }
 
           if (!offscreenDone) {
@@ -1306,11 +1265,9 @@
               finalExt = 'mp4';
               if (typeof engine.probeTracks === 'function') {
                 const mergedProbe = await engine.probeTracks(await finalBlob.arrayBuffer());
-                console.log('[VI-AUDIO] MP4Box merge ok', mergedProbe, 'bytes', finalBlob.size);
                 if (!mergedProbe.hasAudio) throw new Error('merge produced no audio track');
               }
             } catch (mergeError) {
-              console.error('[VI-AUDIO] all merge failed -> save tracks separately', mergeError);
               const base = String(filename || 'video').replace(/\.[^.]+$/, '');
               const videoExt = (result.ext === 'webm' || (tracks[0] && tracks[0].type === 'video/webm')) ? 'webm' : 'mp4';
               saveHref(URL.createObjectURL(tracks[0]), base + '.video.' + videoExt);
@@ -1349,13 +1306,11 @@
       if (typeof engine.probeTracks === 'function' && tracks.length > 1 && !separateSaved) {
         try {
           const probe = await engine.probeTracks(await finalBlob.arrayBuffer());
-          console.log('[VI-AUDIO] final probe', probe, 'size', finalBlob.size);
           // 合并结果必须同时有视频轨，否则就是“有声无画”，宁可报错也不落盘
           if (!probe.hasVideo) throw new Error('merge produced no video track');
           if (probe.audioTracks > 1) {
             // 合并后的 fMP4 里 soun 常被重复扫描到，这里只记录，不再回退成源视频——
             // 回退会丢掉刚合并进去的音轨，正是“下载下来没声音”的来源之一。
-            console.warn('[VI-AUDIO] multi-audio detected, keep merged output', probe);
           }
         } catch (e) {
           if (/no (audio|video) track|merge produced/i.test(String(e && e.message))) throw e;

@@ -180,7 +180,6 @@ async function muxOnce(ff, videoBuf, audioBuf) {
       exitStatusSeen = true;
     } else {
       aacFailed = true;
-      console.warn('[VI-AUDIO] aac encode failed, retry stream copy', msg);
     }
   }
   if (aacFailed) {
@@ -221,7 +220,6 @@ async function muxOnce(ff, videoBuf, audioBuf) {
 }
 
 function debug(msg) {
-  console.log('[VI-OFFSCREEN]', msg);
   send({ type: 'vi-mux-progress', id: currentId, ratio: 0, note: String(msg) });
 }
 
