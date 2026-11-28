@@ -38,7 +38,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       // 直接忽略即可，不报错
       if (/^(chrome|edge|chrome-extension|edge-extension|about):/i.test(url)) return;
       try {
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['tailwind-css.js', 'ui.js', 'content.js'] });
         await new Promise((r) => setTimeout(r, 120));
         await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_QR', text: url });
       } catch (e2) {
@@ -75,7 +75,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        files: ['content.js'],
+        files: ['tailwind-css.js', 'ui.js', 'content.js'],
       });
       // 等一帧让 content.js 注册好 listener
       setTimeout(async () => {

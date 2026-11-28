@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { deleteImages, deleteNodes, getAllNodes, putNode } from '../db.js';
+import { deleteImages, deleteNodes, getAllNodes, putNode } from '../lib/db.js';
 import buildSeed from '../lib/seed.js';
 import {
   imageIdsInHtml,

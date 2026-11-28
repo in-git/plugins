@@ -1,4 +1,4 @@
-import { putImage, getImage } from '../db.js';
+import { putImage, getImage } from './db.js';
 import { uid } from './utils.js';
 
 // blob: URL → IndexedDB 图片 id，保存时把临时地址换回 idb://<id>

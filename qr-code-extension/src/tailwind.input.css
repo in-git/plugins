@@ -1,0 +1,263 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 二维码弹窗：结构与图片助手一致 —— 标题栏 / 内容分栏 / 底部作者信息。
+   类名统一 qr- 前缀，全部放在 Shadow DOM 内，不受页面样式影响。 */
+@layer components {
+  .qr-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 2147483647;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    animation: qr-fade-in 160ms ease-out;
+    cursor: default;
+  }
+
+  .qr-modal {
+    position: relative;
+    width: min(640px, calc(100vw - 48px));
+    padding: 22px 22px 18px;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06);
+    animation: qr-pop-in 180ms cubic-bezier(.2, .9, .3, 1.2);
+  }
+
+  .qr-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 50%;
+    background: #f2f2f4;
+    color: #666;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 120ms;
+  }
+  .qr-close:hover { background: #e5e5ea; color: #000; }
+
+  .qr-title {
+    margin: 0 0 14px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #111;
+    text-align: left;
+  }
+
+  /* 左右分栏 */
+  .qr-body { display: flex; gap: 20px; }
+  .qr-col-left { flex: 1.15; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .qr-col-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+
+  @media (max-width: 540px) {
+    .qr-body { flex-direction: column; }
+    .qr-modal { width: min(380px, calc(100vw - 32px)); }
+  }
+
+  /* —— 左侧 —— */
+  .qr-input {
+    width: 100%;
+    min-height: 96px;
+    max-height: 200px;
+    padding: 10px 12px;
+    border: 1px solid #e5e5ea;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #111;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    transition: border-color 120ms, box-shadow 120ms;
+  }
+  .qr-input:focus { border-color: #111; box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06); }
+  .qr-input::placeholder { color: #aaa; }
+  .qr-input.warn { border-color: #ff3b30; }
+
+  .qr-char-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    color: #aaa;
+  }
+  .qr-char-row .warn { color: #ff3b30; font-weight: 500; }
+
+  /* 设置区 */
+  .qr-settings-title {
+    margin: 2px 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #888;
+  }
+
+  .qr-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .qr-preset-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 44px;
+    padding: 0 8px;
+    border: 1px solid #e5e5ea;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color 120ms, background 120ms;
+  }
+  .qr-preset-btn:hover { background: #fafafa; border-color: #c8c8ce; }
+  .qr-preset-btn.active { border-color: #111; box-shadow: 0 0 0 1px #111; }
+
+  /* 用 div 拼出的迷你二维码，直观展示前景 / 背景配色 */
+  .qr-preset-qr {
+    display: grid;
+    grid-template-columns: repeat(7, 3px);
+    gap: 1px;
+    padding: 3px;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  }
+  .qr-preset-cell { width: 3px; height: 3px; }
+
+  .qr-adv-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid #e5e5ea;
+    border-radius: 10px;
+    background: #fafafa;
+  }
+  .qr-adv-row { display: flex; flex-direction: column; gap: 4px; }
+  .qr-adv-row label { font-size: 14px; color: #888; }
+  .qr-adv-row input[type="number"],
+  .qr-adv-row select {
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid #e5e5ea;
+    border-radius: 6px;
+    background: #fff;
+    font-size: 12px;
+    color: #111;
+    font-family: inherit;
+    outline: none;
+  }
+  .qr-adv-row input:focus,
+  .qr-adv-row select:focus { border-color: #111; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06); }
+  .qr-adv-row input[type="color"] {
+    height: 30px;
+    padding: 2px;
+    border: 1px solid #e5e5ea;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+  }
+
+  /* —— 右侧 —— */
+  .qr-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-height: 240px;
+    padding: 8px 0;
+  }
+  .qr-canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .qr-empty-hint {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    max-width: 248px;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    background: #f5f5f7;
+    color: #999;
+    font-size: 13px;
+  }
+  .qr-empty-hint .big { font-size: 36px; }
+
+  .qr-actions { display: flex; gap: 8px; }
+  .qr-btn {
+    flex: 1;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 80ms, background 120ms;
+  }
+  .qr-btn:active { transform: scale(0.97); }
+  .qr-btn-primary { background: #111; color: #fff; }
+  .qr-btn-primary:hover { background: #000; }
+  .qr-btn-secondary { background: #f2f2f4; color: #111; }
+  .qr-btn-secondary:hover { background: #e5e5ea; }
+  .qr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* —— 底部作者信息 —— */
+  .qr-footer { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .qr-author { position: relative; display: inline-flex; width: 22px; height: 22px; flex: 0 0 22px; }
+  .qr-author img { width: 22px; height: 22px; border-radius: 6px; display: block; }
+  .qr-author .qr-tip {
+    position: absolute;
+    bottom: calc(100% + 7px);
+    left: -4px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(32, 32, 34, 0.94);
+    color: #fff;
+    font-size: 12px;
+    line-height: 16px;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(2px);
+    pointer-events: none;
+    transition: opacity 140ms ease-out, transform 140ms ease-out;
+  }
+  .qr-author .qr-tip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 15px;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: rgba(32, 32, 34, 0.94);
+    transform: translate(-50%, -3px) rotate(45deg);
+  }
+  .qr-author:hover .qr-tip { opacity: 1; transform: translateY(0); }
+  .qr-ver { font-size: 12px; color: #aaa; }
+}
+
+@keyframes qr-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes qr-pop-in {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}

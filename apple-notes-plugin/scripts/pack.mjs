@@ -5,11 +5,12 @@
 // 本脚本手写 zip 结构，强制使用 "/" 作为分隔符。
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, cpSync, existsSync, rmSync, statSync } from 'node:fs';
-import { join, relative, dirname } from 'node:path';
+import { join, relative, dirname, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
+// 脚本位于 scripts/，项目根目录是它的上一级
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = join(root, 'dist');
 
 if (!existsSync(join(distDir, 'manifest.json'))) {

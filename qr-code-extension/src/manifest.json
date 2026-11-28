@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "文龙二维码助手",
-  "version": "1.0.12",
+  "version": "1.0.15",
   "description": "右键菜单一键把当前页面、选中文字或链接生成二维码，屏幕居中展示可扫码下载。",
   "icons": {
     "16": "icons/icon16.png",
@@ -19,14 +19,13 @@
     "default_title": "文龙二维码助手"
   },
   "permissions": ["contextMenus", "scripting", "activeTab"],
-  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["tailwind-css.js", "ui.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

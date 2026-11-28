@@ -13,11 +13,12 @@ import {
   rmSync,
   statSync
 } from 'node:fs';
-import { join, relative, dirname, basename } from 'node:path';
+import { join, relative, dirname, basename, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
+// 脚本位于 scripts/，项目根目录是它的上一级
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = join(root, 'dist');
 
 if (!existsSync(join(distDir, 'manifest.json'))) {

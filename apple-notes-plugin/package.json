@@ -1,14 +1,14 @@
 {
   "name": "apple-notes-plugin",
   "private": true,
-  "version": "2.1.12",
+  "version": "2.1.13",
   "type": "module",
   "description": "苹果风格黑白笔记：无限目录树 + AiEditor 富文本 + IndexedDB 本地图片",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "pack": "vite build && node pack.mjs"
+    "pack": "node scripts/bump-version.mjs && vite build && node scripts/pack.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
