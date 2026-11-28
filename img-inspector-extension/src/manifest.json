@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "文龙图片下载助手",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "description": "扫描当前网页中的所有图片，支持瀑布流预览、尺寸筛选、多选与一键打包下载。",
   "permissions": ["activeTab", "scripting", "downloads", "storage", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
@@ -33,5 +33,11 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["bilibili.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

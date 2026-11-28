@@ -8,7 +8,7 @@ const src = resolve(root, 'src');
 const dist = resolve(root, 'dist');
 
 // 运行时原样复制的文件；扩展最终从 dist/ 加载
-const STATIC_FILES = ['manifest.json', 'background.js', 'content.js', 'bootstrap.js', 'zip.js', 'popup.html', 'popup.js', 'rules.json'];
+const STATIC_FILES = ['manifest.json', 'background.js', 'content.js', 'bootstrap.js', 'zip.js', 'popup.html', 'popup.js', 'rules.json', 'bilibili.png'];
 
 async function compileCss() {
   // 直接调用本地 tailwindcss CLI，避免依赖 npm 脚本执行顺序

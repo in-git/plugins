@@ -1,6 +1,6 @@
 {
   "name": "video-inspector-extension",
-  "version": "1.19.37",
+  "version": "1.19.39",
   "private": true,
   "description": "文龙视频下载助手 —— MV3 浏览器扩展",
   "scripts": {

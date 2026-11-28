@@ -2,7 +2,9 @@
 (() => {
   // src/content/core/constants.js
   var MAX_DEPTH = 12;
-  var EXT_VERSION = "1.19.35";
+  var EXT_VERSION = (function () {
+  try { return chrome.runtime.getManifest().version; } catch (e) { return "0.0.0"; }
+})();
   var FEEDBACK_URL = "https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0";
   var PREVIEW_LIMIT = 60;
   var DOWNLOAD_STALL_TIMEOUT = 9e4;
@@ -349,19 +351,8 @@
   -webkit-user-select: none;
 }
 .vi-title-wrap { flex: 1; min-width: 0; }
-.vi-kicker {
-  margin-bottom: 9px;
-  font: 600 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  letter-spacing: 2px;
-  color: #86868b;
-  text-transform: uppercase;
-}
-.vi-head h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.3px; color: #1d1d1f; }
-.vi-version {
-  display: inline-block; margin-left: 10px; padding: 2px 8px;
-  border-radius: 6px; background: #f6f6f7; color: #86868b;
-  font: 11px/1.5 ui-monospace, Consolas, monospace; vertical-align: middle;
-}
+/* 小标题作为副标题：去掉主标题后只保留这一行 */
+.vi-head h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .2px; color: #86868b; }
 .vi-count {
   flex: none;
   display: flex;
@@ -814,24 +805,53 @@
   border-top: 1px solid #f5f5f7;
 }
 .vi-shortcut-hint {
+  margin-left: auto;
   color: #86868b;
   font-size: 11px;
   white-space: nowrap;
 }
-.vi-btn.feedback {
+/* 队列按钮浮在右下角时，给快捷键提示留出避让空间 */
+.vi-footer:has(.vi-queue-fab:not([hidden])) .vi-shortcut-hint { margin-right: 132px; }
+.vi-author {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 14px;
-  border-color: transparent;
-  background: transparent;
-  color: #007aff;
-  font-weight: 500;
+  width: 26px;
+  height: 26px;
+  margin-left: 8px;
+  flex: none;
 }
-.vi-btn.feedback:hover { background: rgba(0, 122, 255, .06); border-color: transparent; color: #007aff; }
-.vi-feedback-icon { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.vi-author img { width: 20px; height: 20px; border-radius: 5px; display: block; }
+.vi-author-tip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(32, 32, 34, .94);
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 2px);
+  pointer-events: none;
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+.vi-author-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  background: rgba(32, 32, 34, .94);
+  transform: translate(-50%, -3px) rotate(45deg);
+  border-radius: 1px;
+}
+.vi-author:hover .vi-author-tip { opacity: 1; transform: translate(-50%, 0); }
+.vi-ver { margin-left: 6px; color: #86868b; font-size: 11px; white-space: nowrap; }
 
 </style>
 
@@ -847,8 +867,7 @@
 <div class="vi-dialog" role="dialog" aria-modal="true" aria-labelledby="vi-title">
   <header class="vi-head">
     <div class="vi-title-wrap">
-      <div class="vi-kicker">${t("kicker")}</div>
-      <h2 id="vi-title">${t("dialogTitle")} <span class="vi-version">v${EXT_VERSION}</span></h2>
+      <h2 id="vi-title">${t("kicker")}</h2>
     </div>
     <div class="vi-count"><span class="num">0</span><span class="unit">${t("countUnit")}</span></div>
     <button class="vi-x" type="button" data-action="close" aria-label="${t("close")}">×</button>
@@ -889,15 +908,16 @@
   <div class="vi-grid"></div>
 
   <footer class="vi-footer">
+    <a class="vi-author" href="${FEEDBACK_URL}" target="_blank" rel="noopener noreferrer" aria-label="联系作者：吴文龙">
+      <img src="${chrome.runtime.getURL("bilibili.png")}" alt="B站" />
+      <span class="vi-author-tip">联系作者：吴文龙</span>
+    </a>
+    <span class="vi-ver">v${EXT_VERSION}</span>
     <span class="vi-shortcut-hint">${t("shortcutHint")}</span>
     <button class="vi-queue-fab" type="button" data-action="queue-toggle" hidden aria-label="${t("queueTitle")}">
       <span class="vi-queue-fab-icon">↓</span>
       <span>${t("queueTitle")}</span>
       <span class="vi-queue-fab-count">0</span>
-    </button>
-    <button class="vi-btn feedback" type="button" data-action="feedback" title="可在B站私信反馈问题：${FEEDBACK_URL}">
-      <svg class="vi-feedback-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v10h16V6H4z"/></svg>
-      <span>${t("feedback")}</span>
     </button>
   </footer>
 

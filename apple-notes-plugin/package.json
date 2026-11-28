@@ -1,7 +1,7 @@
 {
   "name": "apple-notes-plugin",
   "private": true,
-  "version": "2.1.7",
+  "version": "2.1.12",
   "type": "module",
   "description": "苹果风格黑白笔记：无限目录树 + AiEditor 富文本 + IndexedDB 本地图片",
   "scripts": {

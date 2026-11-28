@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "文龙视频下载助手",
   "description": "选中页面元素，以网格模态框展示并下载其下所有视频。可在B站私信反馈问题。",
-  "version": "1.19.37",
+  "version": "1.19.39",
   "homepage_url": "https://space.bilibili.com/3706965849016893?spm_id_from=333.1007.0.0",
   "icons": {
     "16": "icons/icon16.png",
@@ -42,6 +42,12 @@
       "all_frames": true,
       "match_about_blank": true,
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["bilibili.png"],
+      "matches": ["<all_urls>"]
     }
   ]
 }

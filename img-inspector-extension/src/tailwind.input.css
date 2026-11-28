@@ -445,3 +445,49 @@
     text-align: center;
   }
 }
+
+/* 作者联系方式：与记事本一致的图标 + 深色气泡提示 */
+.ii-author {
+  position: relative;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.ii-author img {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: block;
+}
+.ii-author-tip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(32, 32, 34, 0.94);
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 2px);
+  pointer-events: none;
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+.ii-author-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  background: rgba(32, 32, 34, 0.94);
+  transform: translate(-50%, -3px) rotate(45deg);
+  border-radius: 1px;
+}
+.ii-author:hover .ii-author-tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

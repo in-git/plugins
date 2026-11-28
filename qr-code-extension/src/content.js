@@ -15,6 +15,17 @@ const PRESETS = [
   { label: '绿前景 · 米白背景', dark: '#0d7a4a', light: '#f5f7f1' },
 ];
 
+// 7×7 迷你二维码点阵：1 表示前景色，0 表示背景色
+const MINI_QR_PATTERN = [
+  1, 1, 1, 0, 1, 1, 1,
+  1, 1, 1, 0, 1, 1, 1,
+  0, 0, 0, 1, 0, 1, 0,
+  1, 1, 0, 1, 0, 0, 1,
+  0, 1, 1, 0, 1, 1, 0,
+  1, 1, 1, 0, 1, 0, 1,
+  1, 1, 1, 1, 0, 1, 0,
+];
+
 function ensureHost() {
   let host = document.getElementById(HOST_ID);
   if (host) return host;
@@ -105,20 +116,21 @@ function ensureHost() {
       display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
     }
     .preset-btn {
-      height: 36px; padding: 0 8px;
+      height: 44px; padding: 0 8px;
       border: 1px solid #e5e5ea; border-radius: 8px;
       background: #fff; cursor: pointer;
-      display: flex; align-items: center; gap: 8px;
-      font-size: 12px; color: #111;
+      display: flex; align-items: center; justify-content: center;
       transition: border-color 120ms, background 120ms;
     }
     .preset-btn:hover { background: #fafafa; border-color: #c8c8ce; }
     .preset-btn.active { border-color: #111; box-shadow: 0 0 0 1px #111; }
-    .preset-swatch {
-      flex: 0 0 16px; width: 16px; height: 16px; border-radius: 4px;
-      border: 1px solid #e5e5ea;
-      background-image: linear-gradient(135deg, var(--pk-dark) 0 50%, var(--pk-light) 50% 100%);
+    /* 用 div 拼出的迷你二维码，直观展示前景 / 背景配色 */
+    .preset-qr {
+      display: grid; grid-template-columns: repeat(7, 3px); gap: 1px;
+      padding: 3px; border-radius: 4px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
     }
+    .preset-cell { width: 3px; height: 3px; }
     .adv-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
       padding: 10px; border: 1px solid #e5e5ea; border-radius: 10px;
@@ -170,6 +182,32 @@ function ensureHost() {
     .btn-secondary { background: #f2f2f4; color: #111; }
     .btn-secondary:hover { background: #e5e5ea; }
     .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+    /* —— 底部作者信息 —— */
+    .footer {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 12px;
+    }
+    .author {
+      position: relative; display: inline-flex;
+      width: 22px; height: 22px; flex: 0 0 22px;
+    }
+    .author img { width: 22px; height: 22px; border-radius: 6px; display: block; }
+    .author .tip {
+      position: absolute; bottom: calc(100% + 7px); left: -4px;
+      padding: 4px 8px; border-radius: 6px;
+      background: rgba(32,32,34,0.94); color: #fff;
+      font-size: 12px; line-height: 16px; white-space: nowrap;
+      opacity: 0; transform: translateY(2px); pointer-events: none;
+      transition: opacity 140ms ease-out, transform 140ms ease-out;
+    }
+    .author .tip::after {
+      content: ''; position: absolute; top: 100%; left: 15px;
+      width: 6px; height: 6px; background: rgba(32,32,34,0.94);
+      transform: translate(-50%, -3px) rotate(45deg); border-radius: 1px;
+    }
+    .author:hover .tip { opacity: 1; transform: translateY(0); }
+    .ver { font-size: 12px; color: #aaa; }
   `);
   shadow.adoptedStyleSheets = [css];
   return host;
@@ -234,11 +272,21 @@ function showQr(initialText) {
   PRESETS.forEach((p) => {
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'preset-btn';
-    btn.title = p.label;
+    btn.setAttribute('aria-label', p.label);
     btn.dataset.dark = p.dark; btn.dataset.light = p.light;
-    btn.innerHTML = `
-      <span class="preset-swatch" style="--pk-dark:${p.dark};--pk-light:${p.light}"></span>
-      <span>${p.label}</span>`;
+
+    // 迷你二维码：7×7 方格，深色格用前景色、底色用背景色
+    const miniQr = document.createElement('div');
+    miniQr.className = 'preset-qr';
+    miniQr.style.background = p.light;
+    MINI_QR_PATTERN.forEach((on) => {
+      const cell = document.createElement('span');
+      cell.className = 'preset-cell';
+      if (on) cell.style.background = p.dark;
+      miniQr.appendChild(cell);
+    });
+
+    btn.appendChild(miniQr);
     presets.appendChild(btn);
   });
 
@@ -315,9 +363,39 @@ function showQr(initialText) {
   body.appendChild(colLeft);
   body.appendChild(colRight);
 
+  // ============ 底部：作者 + 版本 ============
+  const footer = document.createElement('div');
+  footer.className = 'footer';
+
+  const author = document.createElement('a');
+  author.className = 'author';
+  author.href = 'https://space.bilibili.com/3706965849016893';
+  author.target = '_blank';
+  author.rel = 'noopener noreferrer';
+  author.setAttribute('aria-label', '联系作者：吴文龙');
+
+  const authorImg = document.createElement('img');
+  authorImg.src = chrome.runtime.getURL('bilibili.png');
+  authorImg.alt = 'B站';
+
+  const authorTip = document.createElement('span');
+  authorTip.className = 'tip';
+  authorTip.textContent = '联系作者：吴文龙';
+
+  author.appendChild(authorImg);
+  author.appendChild(authorTip);
+
+  const ver = document.createElement('span');
+  ver.className = 'ver';
+  ver.textContent = `v${chrome.runtime.getManifest().version}`;
+
+  footer.appendChild(author);
+  footer.appendChild(ver);
+
   modal.appendChild(closeBtn);
   modal.appendChild(title);
   modal.appendChild(body);
+  modal.appendChild(footer);
   overlay.appendChild(modal);
   shadow.appendChild(overlay);
 

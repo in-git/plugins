@@ -6,7 +6,7 @@ const root = process.cwd();
 const src = resolve(root, 'src');
 const dist = resolve(root, 'dist');
 
-const STATIC_FILES = ['manifest.json', 'background.js'];
+const STATIC_FILES = ['manifest.json', 'background.js', 'bilibili.png'];
 const STATIC_DIRS = ['icons'];
 
 await rm(dist, { recursive: true, force: true });

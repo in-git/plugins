@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "文龙多功能记事本",
-  "version": "2.1.7",
+  "version": "2.1.12",
   "description": "多功能记事本：苹果风格黑白界面，无限层级目录树 + 富文本编辑，笔记与图片全部保存在本地 IndexedDB。",
   "action": {
     "default_title": "打开文龙多功能记事本",

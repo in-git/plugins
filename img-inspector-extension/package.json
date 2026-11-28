@@ -1,6 +1,6 @@
 {
   "name": "img-inspector-extension",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "private": true,
   "type": "module",
   "description": "Edge 扩展：React 实现的网页图片瀑布流探查器",

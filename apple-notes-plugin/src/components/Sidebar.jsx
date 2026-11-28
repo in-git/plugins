@@ -1,6 +1,16 @@
 import React from 'react';
 import { Icon } from './icons.jsx';
 import SidebarTree from './SidebarTree.jsx';
+import Tooltip from './Tooltip.jsx';
+
+// 扩展页内可读到 manifest 版本；在纯浏览器调试环境下忽略
+const APP_VERSION = (() => {
+  try {
+    return chrome.runtime.getManifest().version;
+  } catch {
+    return '';
+  }
+})();
 
 export default function Sidebar({
   width,
@@ -93,15 +103,33 @@ export default function Sidebar({
         />
       </div>
 
-      <div className="flex items-center justify-end border-t border-hairline px-3 py-2">
-        <button
-          type="button"
-          className="nb-icon-btn h-7 w-7"
-          title={theme === 'dark' ? '切换到浅色' : '切换到深色'}
-          onClick={onToggleTheme}
-        >
-          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
-        </button>
+      <div className="flex items-center justify-between border-t border-hairline px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <Tooltip content="联系作者：吴文龙">
+            <a
+              href="https://space.bilibili.com/3706965849016893"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="联系作者：吴文龙"
+              className="nb-icon-btn h-7 w-7"
+            >
+              <img src="/bilibili.png" alt="B站" className="h-[18px] w-[18px] rounded-[5px] object-contain" />
+            </a>
+          </Tooltip>
+          {APP_VERSION ? (
+            <span className="select-none text-[12px] leading-4 text-muted">v{APP_VERSION}</span>
+          ) : null}
+        </div>
+        <Tooltip content={theme === 'dark' ? '切换到浅色' : '切换到深色'}>
+          <button
+            type="button"
+            aria-label={theme === 'dark' ? '切换到浅色' : '切换到深色'}
+            className="nb-icon-btn h-7 w-7"
+            onClick={onToggleTheme}
+          >
+            <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
+          </button>
+        </Tooltip>
       </div>
     </aside>
   );

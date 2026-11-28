@@ -6,6 +6,23 @@ import cropperCss from 'cropperjs/dist/cropper.css';
 
 const controller = () => window.__IMG_INSPECTOR_CONTROLLER__;
 
+// 作者联系方式 + 版本号（与记事本扩展保持一致）
+const AUTHOR_URL = 'https://space.bilibili.com/3706965849016893';
+const APP_VERSION = (() => {
+  try {
+    return chrome.runtime.getManifest().version;
+  } catch {
+    return '';
+  }
+})();
+const AUTHOR_ICON = (() => {
+  try {
+    return chrome.runtime.getURL('bilibili.png');
+  } catch {
+    return '';
+  }
+})();
+
 const ICON_PATHS = {
   refresh: <><path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6" /><path d="M16.5 3.5v4h-4" /></>,
   close: <><path d="M5 5l10 10M15 5L5 15" /></>,
@@ -645,10 +662,6 @@ function Panel() {
             加载更多
           </button>
           <span className="flex-1" />
-          <a className="ii-btn" target="_blank" rel="noreferrer"
-            href="https://space.bilibili.com/3706965849016893"
-            title="B站主页 / 反馈"
-            onClick={(e) => e.stopPropagation()}><Icon name="bili" strokeWidth={1.6} />反馈</a>
           <button type="button" className="ii-btn" onClick={actions.selectAll}>{s.allSelected ? '取消全选' : '全选'}</button>
           <button type="button" className="ii-btn" disabled={!s.selectedCount || downloading || packing}
             title={s.selectedCount ? '' : '请先选择图片'}
@@ -694,11 +707,18 @@ function Panel() {
         </main>
 
         <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-black/[0.05] px-9 py-4 text-[11px] text-subtle">
-          <span className={s.statusKind === 'error' ? 'truncate text-[#b06a62]'
-            : s.statusKind === 'success' ? 'truncate text-[#4b8b6a]' : 'truncate'} title={s.status}>
-            {s.status}
-          </span>
-          <span className="shrink-0 text-[#b8b8bd]">点击卡片选择 · 每张可单独下载 · Esc 关闭</span>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <a className="ii-author" href={AUTHOR_URL} target="_blank" rel="noopener noreferrer"
+              aria-label="联系作者：吴文龙" onClick={(e) => e.stopPropagation()}>
+              <img src={AUTHOR_ICON} alt="B站" />
+              <span className="ii-author-tip">联系作者：吴文龙</span>
+            </a>
+            {APP_VERSION ? <span className="shrink-0 text-[#b8b8bd]">v{APP_VERSION}</span> : null}
+            <span className={s.statusKind === 'error' ? 'truncate text-[#b06a62]'
+              : s.statusKind === 'success' ? 'truncate text-[#4b8b6a]' : 'truncate'} title={s.status}>
+              {s.status}
+            </span>
+          </div>
         </footer>
         {toast && <div className="ii-toast">{toast}</div>}
         {cropTarget && (
